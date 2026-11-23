@@ -22,6 +22,25 @@ export const outputSchema = Type.Object({
       address: Type.String(),
     }),
   ),
+  cc: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.Optional(Type.String()),
+        address: Type.String(),
+      }),
+    ),
+  ),
+  bcc: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.Optional(Type.String()),
+        address: Type.String(),
+      }),
+    ),
+  ),
+  spfResult: Type.Optional(Type.String()),
+  dkimResult: Type.Optional(Type.String()),
+  dmarcResult: Type.Optional(Type.String()),
   subject: Type.String(),
   date: Type.Union([Type.String(), Type.Date()]),
   hasAttachments: Type.Boolean(),

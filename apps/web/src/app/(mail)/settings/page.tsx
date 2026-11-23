@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import QRCode from "qrcode";
+import { startRegistration } from "@simplewebauthn/browser";
 import { rpcCall } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,20 @@ import {
   KeyRound,
   Mail,
   HardDrive,
+  QrCode,
+  Smartphone,
+  Fingerprint,
+  Trash2,
+  Plus,
+  Copy,
+  Check,
+  Eye,
+  EyeOff,
+  ShieldAlert,
+  Key,
+  AlertCircle,
+  RefreshCw,
+  Laptop,
 } from "lucide-react";
 
 interface UserSettings {
@@ -43,6 +59,20 @@ interface UserSettings {
   };
 }
 
+interface PasskeyItem {
+  id: string;
+  name: string;
+  credentialId: string;
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+interface SecurityStatus {
+  totpEnabled: boolean;
+  twoFactorEnforced: boolean;
+  passkeys: PasskeyItem[];
+}
+
 export default function UserSettingsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -56,7 +86,7 @@ export default function UserSettingsPage() {
   const [storageQuota, setStorageQuota] = useState(10 * 1024 * 1024 * 1024);
   const [storageUsed, setStorageUsed] = useState(0);
 
-  // Mail Preferences state (ui-sdk switch state)
+  // Mail Preferences state
   const [autoSaveDrafts, setAutoSaveDrafts] = useState(true);
   const [sendReadReceipts, setSendReadReceipts] = useState(false);
   const [desktopNotifications, setDesktopNotifications] = useState(true);
@@ -67,7 +97,36 @@ export default function UserSettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showCurrentPass, setShowCurrentPass] = useState(false);
+  const [showNewPass, setShowNewPass] = useState(false);
   const [passChanging, setPassChanging] = useState(false);
+
+  // Security & 2FA State
+  const [securityStatus, setSecurityStatus] = useState<SecurityStatus>({
+    totpEnabled: false,
+    twoFactorEnforced: false,
+    passkeys: [],
+  });
+  const [securityLoading, setSecurityLoading] = useState(false);
+
+  // TOTP Setup Wizard state
+  const [showTotpSetup, setShowTotpSetup] = useState(false);
+  const [totpSecret, setTotpSecret] = useState("");
+  const [totpQrUrl, setTotpQrUrl] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [totpVerifying, setTotpVerifying] = useState(false);
+  const [totpCopied, setTotpCopied] = useState(false);
+
+  // TOTP Disable Dialog state
+  const [showDisableModal, setShowDisableModal] = useState(false);
+  const [disablePassword, setDisablePassword] = useState("");
+  const [disablingTotp, setDisablingTotp] = useState(false);
+
+  // Passkey Registration state
+  const [showAddPasskeyModal, setShowAddPasskeyModal] = useState(false);
+  const [passkeyName, setPasskeyName] = useState("");
+  const [registeringPasskey, setRegisteringPasskey] = useState(false);
+  const [deletingPasskeyId, setDeletingPasskeyId] = useState<string | null>(null);
 
   // Toast state
   const [toast, setToast] = useState<string | null>(null);
@@ -76,8 +135,19 @@ export default function UserSettingsPage() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  // Shortcut hint for Save
   const saveHint = "⌘S";
+
+  const loadSecurity = useCallback(async () => {
+    setSecurityLoading(true);
+    try {
+      const data = await rpcCall<SecurityStatus>("user", "securityGet", {});
+      setSecurityStatus(data);
+    } catch (err: any) {
+      console.error("Failed to load security status:", err);
+    } finally {
+      setSecurityLoading(false);
+    }
+  }, []);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -109,7 +179,8 @@ export default function UserSettingsPage() {
       return;
     }
     loadSettings();
-  }, [router, loadSettings]);
+    loadSecurity();
+  }, [router, loadSettings, loadSecurity]);
 
   const handleSavePreferences = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -133,7 +204,7 @@ export default function UserSettingsPage() {
     }
   };
 
-  // Keyboard shortcut: Cmd+S / Ctrl+S saves settings
+  // Keyboard shortcut: Cmd+S / Ctrl+S
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
@@ -167,41 +238,147 @@ export default function UserSettingsPage() {
       setConfirmPassword("");
       showToast("Password updated successfully!");
     } catch (err: any) {
-      alert("Error changing password: " + (err?.message || "Unknown error"));
+      alert("Password change failed: " + (err?.message || "Invalid current password"));
     } finally {
       setPassChanging(false);
     }
   };
 
+  // ── TOTP Setup Handlers ──
+  const handleStartTotpSetup = async () => {
+    setShowTotpSetup(true);
+    try {
+      const res = await rpcCall<{ secret: string; otpauthUri: string }>("user", "totpSetup", {});
+      setTotpSecret(res.secret);
+      const qrDataUrl = await QRCode.toDataURL(res.otpauthUri, {
+        width: 192,
+        margin: 1,
+        color: { dark: "#0f172a", light: "#ffffff" },
+      });
+      setTotpQrUrl(qrDataUrl);
+    } catch (err: any) {
+      alert("Failed to initiate TOTP setup: " + err.message);
+      setShowTotpSetup(false);
+    }
+  };
+
+  const handleCopySecret = () => {
+    navigator.clipboard.writeText(totpSecret);
+    setTotpCopied(true);
+    setTimeout(() => setTotpCopied(false), 2500);
+  };
+
+  const handleVerifyTotp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (totpCode.trim().length !== 6) {
+      alert("Please enter the 6-digit verification code from your authenticator.");
+      return;
+    }
+
+    setTotpVerifying(true);
+    try {
+      await rpcCall("user", "totpEnable", {
+        secret: totpSecret,
+        code: totpCode.trim(),
+      });
+      setShowTotpSetup(false);
+      setTotpCode("");
+      setTotpSecret("");
+      setTotpQrUrl("");
+      showToast("Two-Factor Authentication (TOTP) activated successfully!");
+      loadSecurity();
+    } catch (err: any) {
+      alert("Verification failed: " + err.message);
+    } finally {
+      setTotpVerifying(false);
+    }
+  };
+
+  const handleDisableTotp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!disablePassword) return;
+
+    setDisablingTotp(true);
+    try {
+      await rpcCall("user", "totpDisable", {
+        password: disablePassword,
+      });
+      setShowDisableModal(false);
+      setDisablePassword("");
+      showToast("Two-factor authentication disabled.");
+      loadSecurity();
+    } catch (err: any) {
+      alert("Failed to disable 2FA: " + err.message);
+    } finally {
+      setDisablingTotp(false);
+    }
+  };
+
+  // ── Passkey Handlers ──
+  const handleRegisterPasskey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegisteringPasskey(true);
+    try {
+      const options = await rpcCall<any>("user", "passkeyRegisterOptions", {});
+      const regResponse = await startRegistration({ optionsJSON: options });
+      await rpcCall("user", "passkeyRegisterVerify", {
+        name: passkeyName.trim() || "Hardware Passkey",
+        response: regResponse,
+      });
+      setShowAddPasskeyModal(false);
+      setPasskeyName("");
+      showToast("Passkey enrolled successfully!");
+      loadSecurity();
+    } catch (err: any) {
+      if (err.name !== "NotAllowedError") {
+        alert("Passkey registration error: " + (err?.message || "Failed to complete biometric handshake"));
+      }
+    } finally {
+      setRegisteringPasskey(false);
+    }
+  };
+
+  const handleDeletePasskey = async (credentialId: string) => {
+    if (!confirm("Are you sure you want to remove this Passkey from your account?")) return;
+
+    setDeletingPasskeyId(credentialId);
+    try {
+      await rpcCall("user", "passkeyDelete", { credentialId });
+      showToast("Passkey removed.");
+      loadSecurity();
+    } catch (err: any) {
+      alert("Failed to remove passkey: " + err.message);
+    } finally {
+      setDeletingPasskeyId(null);
+    }
+  };
+
+  const storageUsedMB = Math.round(storageUsed / (1024 * 1024));
+  const storageQuotaMB = Math.round(storageQuota / (1024 * 1024));
+  const storagePercent = Math.min(100, Math.round((storageUsed / storageQuota) * 100));
+
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground text-xs animate-pulse">
+      <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground text-sm font-medium animate-pulse">
         Loading User Settings...
       </div>
     );
   }
 
-  const storageUsedMB = Math.round(storageUsed / (1024 * 1024));
-  const storageQuotaMB = Math.round(storageQuota / (1024 * 1024));
-  const storagePercent = Math.min(100, Math.round((storageUsed / storageQuota) * 100)) || 0;
-
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
-      {/* ── TOP HEADER ── */}
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
+      {/* ── HEADER ── */}
       <header className="h-14 border-b border-border bg-card/60 backdrop-blur-md px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <Link href="/inbox">
-            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs">
-              <ArrowLeft className="size-3.5" />
-              Back to Mail
+            <Button variant="ghost" size="icon-xs" title="Back to Inbox" className="size-8">
+              <ArrowLeft className="size-4" />
             </Button>
           </Link>
-          <Separator orientation="vertical" className="h-4" />
           <div className="flex items-center gap-2">
-            <Sliders className="size-4 text-primary" />
-            <h1 className="font-bold text-sm tracking-tight">Mailbox Settings</h1>
+            <h1 className="text-base font-bold tracking-tight text-foreground">Settings & Security</h1>
           </div>
-          <Badge variant="outline" className="text-[11px] font-medium border-border/80">
+          <Badge variant="outline" className="text-xs font-mono text-muted-foreground border-border/80">
             {email}
           </Badge>
         </div>
@@ -225,7 +402,7 @@ export default function UserSettingsPage() {
         {/* Navigation Tabs Bar */}
         <div className="flex items-center gap-2 border-b border-border pb-2">
           {[
-            { id: "profile", label: "Profile & Quota", icon: User },
+            { id: "profile", label: "Profile & Identity", icon: User },
             { id: "preferences", label: "Mail Preferences", icon: Sliders },
             { id: "security", label: "Security & Passwords", icon: Shield },
           ].map((tab) => {
@@ -319,7 +496,7 @@ export default function UserSettingsPage() {
           </div>
         )}
 
-        {/* ── TAB 2: MAIL PREFERENCES (UI-SDK CONTROLS) ── */}
+        {/* ── TAB 2: CLIENT PREFERENCES ── */}
         {activeTab === "preferences" && (
           <div className="space-y-6">
             <Card>
@@ -411,10 +588,10 @@ export default function UserSettingsPage() {
                   Email Signature
                 </CardTitle>
                 <CardDescription>
-                  Appended automatically to the end of all new outbound messages and replies.
+                  Standard text appended automatically to all outbound messages.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent>
                 <Textarea
                   rows={4}
                   placeholder="--&#10;Best regards,&#10;Alice Smith | CellsInbox"
@@ -430,6 +607,7 @@ export default function UserSettingsPage() {
         {/* ── TAB 3: SECURITY & PASSWORDS ── */}
         {activeTab === "security" && (
           <div className="space-y-6">
+            {/* 1. Password Management */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
@@ -437,37 +615,57 @@ export default function UserSettingsPage() {
                   Change Password
                 </CardTitle>
                 <CardDescription>
-                  Update your authentication password. Hashed locally with Argon2id.
+                  Update your authentication password. Hashed sovereignly with Argon2id.
                 </CardDescription>
               </CardHeader>
               <form onSubmit={handleChangePassword}>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="currentPass">Current Password</Label>
-                    <Input
-                      id="currentPass"
-                      type="password"
-                      required
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      autoComplete="current-password"
-                    />
+                    <div className="relative">
+                      <Input
+                        id="currentPass"
+                        type={showCurrentPass ? "text" : "password"}
+                        required
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        autoComplete="current-password"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCurrentPass(!showCurrentPass)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showCurrentPass ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="newPass">New Password</Label>
-                      <Input
-                        id="newPass"
-                        type="password"
-                        required
-                        minLength={8}
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="••••••••••••"
-                        autoComplete="new-password"
-                      />
+                      <div className="relative">
+                        <Input
+                          id="newPass"
+                          type={showNewPass ? "text" : "password"}
+                          required
+                          minLength={8}
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="••••••••••••"
+                          autoComplete="new-password"
+                          className="pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPass(!showNewPass)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showNewPass ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                        </button>
+                      </div>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="confirmPass">Confirm New Password</Label>
@@ -492,29 +690,335 @@ export default function UserSettingsPage() {
               </form>
             </Card>
 
+            {/* 2. TOTP Two-Factor Authenticator Card */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Lock className="size-4 text-emerald-500" />
-                  Two-Factor Authentication (2FA) Status
-                </CardTitle>
-                <CardDescription>
-                  Mandatory time-based one-time password (TOTP) and WebAuthn Passkeys protection.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center gap-2 text-xs text-emerald-500 font-semibold">
-                  <CheckCircle2 className="size-4" />
-                  <span>2-Step Verification Active & Enforced</span>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Smartphone className="size-4 text-primary" />
+                      Two-Factor Authenticator (TOTP)
+                    </CardTitle>
+                    <CardDescription>
+                      RFC 6238 time-based codes from Google Authenticator, 1Password, or Apple Keychain.
+                    </CardDescription>
+                  </div>
+                  <Badge
+                    variant={securityStatus.totpEnabled ? "default" : "outline"}
+                    className={securityStatus.totpEnabled ? "bg-emerald-600/90 text-white gap-1" : "text-amber-500 border-amber-500/40 gap-1"}
+                  >
+                    {securityStatus.totpEnabled ? (
+                      <>
+                        <CheckCircle2 className="size-3" />
+                        Active
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle className="size-3" />
+                        Not Enrolled
+                      </>
+                    )}
+                  </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Your mailbox session is secured using RFC 6238 TOTP authenticator tokens. Passwords alone cannot authenticate access without passing the secondary cryptographic challenge.
-                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {securityStatus.totpEnabled ? (
+                  <div className="p-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-500">
+                        <CheckCircle2 className="size-4" />
+                        <span>Two-Step Verification is Active</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={handleStartTotpSetup}
+                          className="h-7 text-xs"
+                        >
+                          Reconfigure
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="xs"
+                          onClick={() => setShowDisableModal(true)}
+                          className="h-7 text-xs"
+                        >
+                          Disable 2FA
+                        </Button>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Your account requires entering a 6-digit verification code on every login session.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-lg border border-border bg-card/40 space-y-3">
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Protect your sovereign mailbox from credential stuffing and password leaks by requiring an authenticator code.
+                    </p>
+                    {!showTotpSetup && (
+                      <Button size="sm" onClick={handleStartTotpSetup} className="gap-2">
+                        <QrCode className="size-4" />
+                        Set Up Authenticator App
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* TOTP Setup Wizard (Shown when configuring) */}
+                {showTotpSetup && (
+                  <div className="p-5 rounded-xl border border-primary/40 bg-card/80 space-y-4 animate-in fade-in">
+                    <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                      <h4 className="text-sm font-semibold flex items-center gap-2">
+                        <QrCode className="size-4 text-primary" />
+                        Scan Authenticator QR Code
+                      </h4>
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => {
+                          setShowTotpSetup(false);
+                          setTotpQrUrl("");
+                          setTotpSecret("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-center gap-6">
+                      {totpQrUrl ? (
+                        <div className="p-2.5 rounded-lg bg-white border border-border shadow-sm shrink-0">
+                          <img src={totpQrUrl} alt="TOTP QR Code" className="size-40 rounded" />
+                        </div>
+                      ) : (
+                        <div className="size-44 rounded-lg bg-muted flex items-center justify-center text-xs text-muted-foreground animate-pulse">
+                          Generating QR...
+                        </div>
+                      )}
+
+                      <div className="space-y-3 flex-1">
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-foreground">
+                            1. Scan this QR code with Google Authenticator, 1Password, or Bitwarden.
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Or enter the manual secret key if your camera is unavailable:
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 p-2 rounded-md bg-muted/60 border border-border/80">
+                          <code className="text-xs font-mono font-bold tracking-wider text-foreground flex-1 break-all select-all">
+                            {totpSecret || "Loading..."}
+                          </code>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={handleCopySecret}
+                            title="Copy Secret"
+                            className="shrink-0 size-7"
+                          >
+                            {totpCopied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <form onSubmit={handleVerifyTotp} className="pt-2 border-t border-border/60 flex flex-col sm:flex-row gap-3 items-end">
+                      <div className="space-y-1.5 flex-1 w-full">
+                        <Label htmlFor="totpCodeInput" className="text-xs font-semibold">
+                          2. Enter 6-digit confirmation code
+                        </Label>
+                        <Input
+                          id="totpCodeInput"
+                          type="text"
+                          maxLength={6}
+                          placeholder="123456"
+                          value={totpCode}
+                          onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
+                          required
+                          autoFocus
+                          className="font-mono text-center tracking-[0.25em] text-base h-10"
+                        />
+                      </div>
+                      <Button type="submit" disabled={totpVerifying || totpCode.length !== 6} className="h-10 px-5 shrink-0">
+                        {totpVerifying ? "Verifying..." : "Verify & Enable 2FA"}
+                      </Button>
+                    </form>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 3. WebAuthn Passkeys (FIDO2 / Biometrics) */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Fingerprint className="size-4 text-primary" />
+                      Hardware Security Keys & Passkeys
+                    </CardTitle>
+                    <CardDescription>
+                      Phishing-resistant authentication using Touch ID, Face ID, Windows Hello, or YubiKeys.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowAddPasskeyModal(true)}
+                    className="gap-1.5 text-xs h-8"
+                  >
+                    <Plus className="size-3.5" />
+                    Add Passkey
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {securityStatus.passkeys.length === 0 ? (
+                  <div className="p-6 text-center rounded-lg border border-dashed border-border text-muted-foreground space-y-2">
+                    <Fingerprint className="size-8 mx-auto text-muted-foreground/50" />
+                    <p className="text-xs">No Passkeys enrolled yet.</p>
+                    <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
+                      Add a Passkey for instant 1-touch login without needing passwords or authenticator codes.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border/60 rounded-lg border border-border/80 overflow-hidden bg-card/40">
+                    {securityStatus.passkeys.map((pk) => (
+                      <div key={pk.id} className="p-3.5 flex items-center justify-between gap-4 hover:bg-muted/20 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
+                            <Laptop className="size-4" />
+                          </div>
+                          <div className="min-w-0 space-y-0.5">
+                            <p className="text-xs font-semibold text-foreground truncate">{pk.name}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              Created on {new Date(pk.createdAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}
+                              {pk.lastUsedAt && ` • Last used ${new Date(pk.lastUsedAt).toLocaleDateString([], { month: "short", day: "numeric" })}`}
+                            </p>
+                          </div>
+                        </div>
+
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => handleDeletePasskey(pk.id)}
+                          disabled={deletingPasskeyId === pk.id}
+                          className="text-muted-foreground hover:text-destructive shrink-0 size-8"
+                          title="Remove Passkey"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         )}
       </div>
+
+      {/* ── MODAL: ADD PASSKEY ── */}
+      {showAddPasskeyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <Card className="w-full max-w-md border-border shadow-2xl">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Fingerprint className="size-5 text-primary" />
+                Enroll New Passkey
+              </CardTitle>
+              <CardDescription>
+                Your browser or operating system will prompt you for Touch ID, Face ID, or your physical security key.
+              </CardDescription>
+            </CardHeader>
+            <form onSubmit={handleRegisterPasskey}>
+              <CardContent className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="passkeyNameInput">Passkey Device Nickname</Label>
+                  <Input
+                    id="passkeyNameInput"
+                    placeholder="e.g. Alice's MacBook Pro Touch ID"
+                    value={passkeyName}
+                    onChange={(e) => setPasskeyName(e.target.value)}
+                    autoFocus
+                    required
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    A friendly label to identify this device in your account.
+                  </p>
+                </div>
+              </CardContent>
+              <CardFooter className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setShowAddPasskeyModal(false)}
+                  disabled={registeringPasskey}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={registeringPasskey} className="gap-2">
+                  <Fingerprint className="size-4" />
+                  {registeringPasskey ? "Waiting for Biometrics..." : "Prompt Passkey"}
+                </Button>
+              </CardFooter>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* ── MODAL: DISABLE TOTP ── */}
+      {showDisableModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <Card className="w-full max-w-md border-border shadow-2xl">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2 text-destructive">
+                <ShieldAlert className="size-5" />
+                Disable Two-Factor Authentication
+              </CardTitle>
+              <CardDescription>
+                Confirm your account password to remove TOTP authenticator protection.
+              </CardDescription>
+            </CardHeader>
+            <form onSubmit={handleDisableTotp}>
+              <CardContent className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="disablePass">Current Password</Label>
+                  <Input
+                    id="disablePass"
+                    type="password"
+                    placeholder="••••••••••••"
+                    value={disablePassword}
+                    onChange={(e) => setDisablePassword(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </div>
+              </CardContent>
+              <CardFooter className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setShowDisableModal(false);
+                    setDisablePassword("");
+                  }}
+                  disabled={disablingTotp}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="destructive" disabled={disablingTotp || !disablePassword}>
+                  {disablingTotp ? "Disabling..." : "Confirm & Disable 2FA"}
+                </Button>
+              </CardFooter>
+            </form>
+          </Card>
+        </div>
+      )}
 
       {/* ── TOAST NOTIFICATION ── */}
       {toast && (

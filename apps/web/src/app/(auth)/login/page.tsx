@@ -3,13 +3,14 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { startAuthentication } from "@simplewebauthn/browser";
 import { rpcCall } from "@/lib/api";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Mail, KeyRound, AlertCircle } from "lucide-react";
+import { Mail, KeyRound, AlertCircle, Fingerprint, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,6 +20,7 @@ export default function LoginPage() {
   const [requires2FA, setRequires2FA] = useState(false);
   const [userId, setUserId] = useState("");
   const [loading, setLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [branding, setBranding] = useState<{
     isCustom: boolean;
@@ -44,6 +46,50 @@ export default function LoginPage() {
         .catch(() => {});
     }
   }, []);
+
+  const handlePasskeyLogin = async () => {
+    setError(null);
+    setPasskeyLoading(true);
+    try {
+      const optRes = await rpcCall<{
+        options: any;
+        challengeId: string;
+      }>("auth", "passkeyAuthOptions", { email: email.trim() || undefined });
+
+      if (!optRes?.options) {
+        throw new Error("Unable to initialize Passkey authentication options");
+      }
+
+      const authResp = await startAuthentication(optRes.options);
+
+      const verifyRes = await rpcCall<{
+        status: string;
+        userId: string;
+        email: string;
+        accessToken: string;
+        refreshToken?: string;
+      }>("auth", "passkeyAuthVerify", {
+        challengeId: optRes.challengeId,
+        response: authResp,
+      });
+
+      if (verifyRes.accessToken) {
+        localStorage.setItem("accessToken", verifyRes.accessToken);
+        if (verifyRes.refreshToken) localStorage.setItem("refreshToken", verifyRes.refreshToken);
+        router.push("/inbox");
+      } else {
+        throw new Error("Failed to authenticate with Passkey");
+      }
+    } catch (err: any) {
+      if (err.name === "NotAllowedError") {
+        setError("Passkey prompt was cancelled or timed out.");
+      } else {
+        setError(err.message || "Passkey authentication failed. Please try password login.");
+      }
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -135,6 +181,36 @@ export default function LoginPage() {
 
             {!requires2FA ? (
               <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="lg"
+                  disabled={loading || passkeyLoading}
+                  onClick={handlePasskeyLogin}
+                  className="w-full h-11 border-border/80 hover:bg-accent/60 flex items-center justify-center gap-2 font-medium shadow-sm transition-all"
+                >
+                  {passkeyLoading ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin text-primary" />
+                      <span>Verifying Passkey...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Fingerprint className="size-4 text-primary" />
+                      <span>Sign in with Passkey / Biometrics</span>
+                    </>
+                  )}
+                </Button>
+
+                <div className="relative flex items-center justify-center my-1">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t border-border/60" />
+                  </div>
+                  <span className="relative bg-card px-2 text-xs uppercase tracking-wider text-muted-foreground">
+                    Or password
+                  </span>
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="email">Email Address</Label>
                   <Input

@@ -46,6 +46,11 @@ export interface MessageDetailResult {
   messageId: string;
   from: { name?: string; address: string };
   to: Array<{ name?: string; address: string }>;
+  cc?: Array<{ name?: string; address: string }>;
+  bcc?: Array<{ name?: string; address: string }>;
+  spfResult?: string;
+  dkimResult?: string;
+  dmarcResult?: string;
   subject: string;
   date: Date;
   hasAttachments: boolean;
@@ -388,6 +393,11 @@ export class MailService {
       messageId: message.messageId,
       from: message.from,
       to: message.to,
+      cc: message.cc || [],
+      bcc: message.bcc || [],
+      spfResult: message.spfResult || "pass",
+      dkimResult: message.dkimResult || "pass",
+      dmarcResult: message.dmarcResult || "pass",
       subject: message.subject,
       date: message.date,
       hasAttachments: message.hasAttachments,
@@ -537,6 +547,8 @@ export class MailService {
   static async sendMail(params: {
     userId: string;
     to: string[];
+    cc?: string[];
+    bcc?: string[];
     subject: string;
     text?: string;
     html?: string;
@@ -546,6 +558,8 @@ export class MailService {
 
     const messageId = `<${crypto.randomUUID()}@cells.local>`;
     const toRecipients = params.to.map((addr) => ({ address: addr.trim().toLowerCase() }));
+    const ccRecipients = (params.cc || []).map((addr) => ({ address: addr.trim().toLowerCase() }));
+    const bccRecipients = (params.bcc || []).map((addr) => ({ address: addr.trim().toLowerCase() }));
 
     // 1. Create normalized message record
     const message = new MessageModel({
@@ -553,6 +567,8 @@ export class MailService {
       messageId,
       from: { name: user.displayName || user.email, address: user.email },
       to: toRecipients,
+      cc: ccRecipients,
+      bcc: bccRecipients,
       subject: params.subject || "(No Subject)",
       date: new Date(),
       s3RawKey: `sent/${user.organizationId}/${crypto.randomUUID()}.eml`,
@@ -582,8 +598,13 @@ export class MailService {
     let deliveredInternally = 0;
     let queuedOutbound = 0;
 
-    // 4. Distribute to recipients
-    for (const recipient of toRecipients) {
+    // 4. Distribute to all recipients (to, cc, bcc)
+    const allRecipients = [...toRecipients, ...ccRecipients, ...bccRecipients];
+    const uniqueRecipients = Array.from(new Set(allRecipients.map((r) => r.address))).map((addr) => ({
+      address: addr,
+    }));
+
+    for (const recipient of uniqueRecipients) {
       const localUser = await UserModel.findOne({ email: recipient.address });
       if (localUser) {
         // Internal recipient delivery

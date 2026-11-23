@@ -278,4 +278,117 @@ export class AuthService {
 
     return verification;
   }
+
+  // --- User-facing Security & Passkeys Management ---
+
+  private static challenges = new Map<string, { challenge: string; expiresAt: number }>();
+
+  static setChallenge(key: string, challenge: string): void {
+    this.challenges.set(key, {
+      challenge,
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    });
+  }
+
+  static getChallenge(key: string): string | null {
+    const entry = this.challenges.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.challenges.delete(key);
+      return null;
+    }
+    this.challenges.delete(key);
+    return entry.challenge;
+  }
+
+  static async enableUserTotp(userId: string, secret: string, code: string): Promise<boolean> {
+    const isValid = authenticator.check(code, secret);
+    if (!isValid) {
+      throw new Error("Invalid 6-digit verification code. Please check your authenticator app.");
+    }
+    const user = await UserModel.findById(userId);
+    if (!user) throw new Error("User not found.");
+
+    await CredentialModel.findOneAndUpdate(
+      { userId: user._id, type: "TOTP" },
+      {
+        secret,
+        name: "Authenticator App (TOTP)",
+        lastUsedAt: new Date(),
+      },
+      { upsert: true, new: true },
+    );
+
+    user.twoFactorEnforced = true;
+    await user.save();
+    return true;
+  }
+
+  static async disableUserTotp(userId: string, currentPasswordPlain: string): Promise<boolean> {
+    const user = await UserModel.findById(userId);
+    if (!user) throw new Error("User not found.");
+
+    const isValid = await argon2.verify(user.passwordHash, currentPasswordPlain);
+    if (!isValid) {
+      throw new Error("Incorrect account password.");
+    }
+
+    await CredentialModel.deleteMany({ userId: user._id, type: "TOTP" });
+
+    const remainingPasskeys = await CredentialModel.countDocuments({ userId: user._id, type: "PASSKEY" });
+    if (remainingPasskeys === 0) {
+      user.twoFactorEnforced = false;
+      await user.save();
+    }
+    return true;
+  }
+
+  static async getUserSecurityStatus(userId: string): Promise<{
+    totpEnabled: boolean;
+    twoFactorEnforced: boolean;
+    passkeys: Array<{
+      id: string;
+      name: string;
+      credentialId: string;
+      createdAt: string;
+      lastUsedAt?: string;
+    }>;
+  }> {
+    const user = await UserModel.findById(userId);
+    if (!user) throw new Error("User not found.");
+
+    const totpCred = await CredentialModel.findOne({ userId: user._id, type: "TOTP" });
+    const passkeyCreds = await CredentialModel.find({ userId: user._id, type: "PASSKEY" }).sort({ createdAt: -1 });
+
+    return {
+      totpEnabled: !!totpCred,
+      twoFactorEnforced: user.twoFactorEnforced,
+      passkeys: passkeyCreds.map((p) => ({
+        id: p._id.toString(),
+        name: p.name || "Hardware / Device Passkey",
+        credentialId: p.credentialId || "",
+        createdAt: p.createdAt.toISOString(),
+        lastUsedAt: p.lastUsedAt ? p.lastUsedAt.toISOString() : undefined,
+      })),
+    };
+  }
+
+  static async deleteUserPasskey(userId: string, credentialId: string): Promise<boolean> {
+    const user = await UserModel.findById(userId);
+    if (!user) throw new Error("User not found.");
+
+    await CredentialModel.deleteOne({
+      userId: user._id,
+      $or: [{ _id: credentialId }, { credentialId }],
+      type: "PASSKEY",
+    });
+
+    const remainingTotp = await CredentialModel.countDocuments({ userId: user._id, type: "TOTP" });
+    const remainingPasskeys = await CredentialModel.countDocuments({ userId: user._id, type: "PASSKEY" });
+    if (remainingTotp === 0 && remainingPasskeys === 0) {
+      user.twoFactorEnforced = false;
+      await user.save();
+    }
+    return true;
+  }
 }

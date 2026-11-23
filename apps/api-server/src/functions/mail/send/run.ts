@@ -19,6 +19,8 @@ export const run = async (
   return await MailService.sendMail({
     userId: authUser.userId,
     to: input.to,
+    cc: input.cc,
+    bcc: input.bcc,
     subject: input.subject,
     text: input.text,
     html: input.html,
