@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import AppLayout from "@/layout/app-layout";
+import PageBreadcrumb from "@/components/common/page-breadcrumb";
 import QRCode from "qrcode";
 import { startRegistration } from "@simplewebauthn/browser";
 import { rpcCall } from "@/lib/api";
@@ -366,39 +368,31 @@ export default function UserSettingsPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
-      {/* ── HEADER ── */}
-      <header className="h-14 border-b border-border bg-card/60 backdrop-blur-md px-6 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <Link href="/inbox">
-            <Button variant="ghost" size="icon-xs" title="Back to Inbox" className="size-8">
-              <ArrowLeft className="size-4" />
-            </Button>
-          </Link>
+    <AppLayout>
+      <div className="w-full min-w-0 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <PageBreadcrumb pageTitle="Settings & Security" />
           <div className="flex items-center gap-2">
-            <h1 className="text-base font-bold tracking-tight text-foreground">Settings & Security</h1>
+            <Badge variant="outline" className="text-xs font-mono text-muted-foreground border-border/80">
+              {email}
+            </Badge>
+            <Button
+              size="sm"
+              onClick={() => handleSavePreferences()}
+              disabled={saving}
+              className="gap-1.5 h-8 text-xs font-semibold cursor-pointer"
+            >
+              <Save className="size-3.5" />
+              {saving ? "Saving..." : "Save Preferences"}
+              <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 rounded bg-primary-foreground/20 text-[10px] font-mono">
+                {saveHint}
+              </kbd>
+            </Button>
           </div>
-          <Badge variant="outline" className="text-xs font-mono text-muted-foreground border-border/80">
-            {email}
-          </Badge>
         </div>
 
-        <Button
-          size="sm"
-          onClick={() => handleSavePreferences()}
-          disabled={saving}
-          className="gap-1.5 h-8 text-xs font-semibold"
-        >
-          <Save className="size-3.5" />
-          {saving ? "Saving..." : "Save Preferences"}
-          <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 rounded bg-primary-foreground/20 text-[10px] font-mono">
-            {saveHint}
-          </kbd>
-        </Button>
-      </header>
-
-      {/* ── SETTINGS CONTAINER ── */}
-      <div className="flex-1 max-w-4xl w-full mx-auto p-6 space-y-6">
+        {/* ── SETTINGS CONTAINER (Full Width) ── */}
+        <div className="w-full space-y-6">
         {/* Navigation Tabs Bar */}
         <div className="flex items-center gap-2 border-b border-border pb-2">
           {[
@@ -1027,6 +1021,7 @@ export default function UserSettingsPage() {
           <span>{toast}</span>
         </div>
       )}
-    </div>
+      </div>
+    </AppLayout>
   );
 }

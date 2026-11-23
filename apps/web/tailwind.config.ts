@@ -15,6 +15,7 @@ const config = {
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/layout/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   prefix: "",
   theme: {
@@ -22,16 +23,33 @@ const config = {
       center: true,
       padding: "2rem",
       screens: {
-        "2xl": "1400px",
+        "2xl": "1536px",
       },
     },
     extend: {
+      spacing: {
+        "65": "16.25rem",
+        "107.5": "26.875rem",
+      },
       colors: {
         border: withOpacity("--border"),
         input: withOpacity("--input"),
         ring: withOpacity("--ring"),
         background: withOpacity("--background"),
         foreground: withOpacity("--foreground"),
+        brand: {
+          50: "rgba(236, 243, 255, 1)",
+          100: "rgba(221, 233, 255, 1)",
+          200: "rgba(194, 214, 255, 1)",
+          300: "rgba(156, 185, 255, 1)",
+          400: "rgba(117, 146, 255, 1)",
+          500: "rgba(70, 95, 255, 1)",
+          600: "rgba(54, 65, 245, 1)",
+          700: "rgba(42, 49, 216, 1)",
+          800: "rgba(37, 45, 174, 1)",
+          900: "rgba(38, 46, 137, 1)",
+          950: "rgba(22, 25, 80, 1)",
+        },
         primary: {
           DEFAULT: withOpacity("--primary"),
           foreground: withOpacity("--primary-foreground"),
@@ -70,6 +88,13 @@ const config = {
           border: withOpacity("--sidebar-border"),
           ring: withOpacity("--sidebar-ring"),
         },
+      },
+      boxShadow: {
+        "theme-xs": "0px 1px 2px 0px rgba(16, 24, 40, 0.05)",
+        "theme-sm": "0px 1px 3px 0px rgba(16, 24, 40, 0.1), 0px 1px 2px 0px rgba(16, 24, 40, 0.06)",
+        "theme-md": "0px 4px 8px -2px rgba(16, 24, 40, 0.1), 0px 2px 4px -2px rgba(16, 24, 40, 0.06)",
+        "theme-lg": "0px 12px 16px -4px rgba(16, 24, 40, 0.08), 0px 4px 6px -2px rgba(16, 24, 40, 0.03)",
+        "theme-xl": "0px 20px 24px -4px rgba(16, 24, 40, 0.08), 0px 8px 8px -4px rgba(16, 24, 40, 0.03)",
       },
       borderRadius: {
         lg: "var(--radius)",

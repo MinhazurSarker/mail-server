@@ -4,6 +4,7 @@ import "./globals.css";
 import { Inter } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ThemeProvider } from "@/context/theme-context";
 import { generateThemeCss } from "@/lib/theme";
 
 const inter = Inter({subsets:['latin'],variable:'--font-sans'});
@@ -70,8 +71,10 @@ export default async function RootLayout({
           />
         ) : null}
       </head>
-      <body className="min-h-screen bg-background font-sans text-foreground antialiased selection:bg-primary selection:text-primary-foreground">
-        <TooltipProvider>{children}</TooltipProvider>
+      <body className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white/90 antialiased selection:bg-brand-500 selection:text-white">
+        <ThemeProvider>
+          <TooltipProvider>{children}</TooltipProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

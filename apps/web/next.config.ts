@@ -10,7 +10,8 @@ const nextConfig: NextConfig = {
   async rewrites() {
     const backendUrl =
       process.env.INTERNAL_API_URL ||
-      (process.env.NODE_ENV === "production" ? "http://api_server:4000" : "http://localhost:4000");
+      process.env.NEXT_PUBLIC_API_URL ||
+      (process.env.NODE_ENV === "production" ? "http://api_server:4000" : "http://localhost:4001");
     return [
       {
         source: "/rpc",

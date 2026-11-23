@@ -2,34 +2,37 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import AppLayout from "@/layout/app-layout";
+import PageBreadcrumb from "@/components/common/page-breadcrumb";
+import MetricCard from "@/components/common/metric-card";
 import { rpcCall } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
-import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
-import { Separator } from "@/components/ui/separator";
 import {
-  ShieldCheck,
-  Server,
-  Globe,
-  Users,
-  Building,
-  Plus,
-  RefreshCw,
-  ArrowRight,
-  ArrowLeft,
-  AlertTriangle,
-  CheckCircle2,
-  Lock,
-  PauseCircle,
-  PlayCircle,
-  ExternalLink,
-  Copy,
-  Check,
-} from "lucide-react";
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  PlusIcon,
+  RefreshIcon,
+  ArrowRightIcon,
+  CopyIcon,
+  CheckIcon,
+  UsersIcon,
+  GlobeIcon,
+  BoxIcon,
+  SparkIcon,
+} from "@/icons";
 
 interface PlatformOverview {
   totalOrganizations: number;
@@ -50,6 +53,15 @@ interface TenantItem {
   domainsCount: number;
   maxStorageBytes: number;
   createdAt: string;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === -1) return "Unlimited";
+  if (!bytes || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 export default function PlatformAdminPage() {
@@ -147,332 +159,339 @@ export default function PlatformAdminPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
+    <AppLayout>
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-2xl animate-in fade-in duration-200">
+        <div className="fixed bottom-6 right-6 z-50 rounded-xl bg-gray-900 px-4 py-2.5 text-xs font-medium text-white shadow-theme-xl dark:bg-white dark:text-gray-900 animate-in fade-in">
           {toast}
         </div>
       )}
 
-      {/* Platform Header */}
-      <header className="h-14 border-b border-border bg-card/60 backdrop-blur-md px-4 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <Link href="/inbox">
-            <Button variant="ghost" size="sm" className="gap-1.5 text-xs">
-              <ArrowLeft className="size-3.5" />
-              Back to Mail
-            </Button>
-          </Link>
-          <Separator orientation="vertical" className="h-5" />
+      <div className="w-full min-w-0 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <PageBreadcrumb pageTitle="Platform Governance" />
           <div className="flex items-center gap-2">
-            <ShieldCheck className="size-4 text-primary" />
-            <span className="font-semibold text-sm">Platform Admin Governance</span>
-            <Badge variant="outline" className="text-[10px] uppercase font-mono px-1.5 py-0">
-              Sovereign Master
-            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadData}
+              disabled={loading}
+              className="gap-1.5 cursor-pointer"
+            >
+              <RefreshIcon className={`size-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setShowOnboard(true);
+                setOnboardSuccess(null);
+              }}
+              className="gap-1.5 cursor-pointer"
+            >
+              <PlusIcon className="size-4" />
+              Onboard Organization
+            </Button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={loadData} disabled={loading} className="gap-1 text-xs">
-            <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-          <Button size="sm" onClick={() => { setShowOnboard(true); setOnboardSuccess(null); }} className="gap-1.5 text-xs">
-            <Plus className="size-3.5" />
-            Onboard New Organization
-          </Button>
-        </div>
-      </header>
-
-      {/* Main Body */}
-      <main className="flex-1 p-4 md:p-8 max-w-6xl mx-auto w-full space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Multi-Tenant Platform Governance</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Oversee tenant organizations, onboard new sovereign domains, and govern active versus suspended tenants.
-          </p>
-        </div>
-
-        {/* Global Metric Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <Card className="p-4 border-border/60">
-            <span className="text-xs text-muted-foreground font-medium">Total Organizations</span>
-            <div className="text-2xl font-bold mt-1 text-primary">{overview?.totalOrganizations ?? 0}</div>
-          </Card>
-          <Card className="p-4 border-border/60">
-            <span className="text-xs text-muted-foreground font-medium">Active Tenants</span>
-            <div className="text-2xl font-bold mt-1 text-emerald-500">{overview?.activeOrganizations ?? 0}</div>
-          </Card>
-          <Card className="p-4 border-border/60">
-            <span className="text-xs text-muted-foreground font-medium">Suspended Tenants</span>
-            <div className="text-2xl font-bold mt-1 text-destructive">{overview?.suspendedOrganizations ?? 0}</div>
-          </Card>
-          <Card className="p-4 border-border/60">
-            <span className="text-xs text-muted-foreground font-medium">Port 25 MTA Inbound</span>
-            <div className="flex items-center gap-1.5 mt-2 text-xs font-semibold text-emerald-500">
-              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-              PORT 25 ACTIVE
-            </div>
-          </Card>
-        </div>
-
-        {/* Tenant Directory Table */}
-        <Card className="border-border/60 overflow-hidden">
-          <CardHeader className="pb-3 border-b border-border/40">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-base font-semibold">Onboarded Organizations</CardTitle>
-                <CardDescription className="text-xs">
-                  Directory of all sovereign tenants with independent domains, user quotas, and governance status.
-                </CardDescription>
-              </div>
-              <Badge variant="outline" className="font-mono text-xs">
-                {tenants.length} Tenants
+        {/* Global Metric Cards (Full Width 4-column Grid) */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6 xl:grid-cols-4">
+          <MetricCard
+            icon={<BoxIcon />}
+            title="Total Organizations"
+            value={overview?.totalOrganizations ?? 0}
+            change={`${overview?.activeOrganizations ?? 0} Active`}
+            direction="up"
+          />
+          <MetricCard
+            icon={<SparkIcon />}
+            title="Suspended Organizations"
+            value={overview?.suspendedOrganizations ?? 0}
+            badge={
+              (overview?.suspendedOrganizations ?? 0) > 0 ? (
+                <Badge color="error" variant="light">
+                  {overview?.suspendedOrganizations} Blocked
+                </Badge>
+              ) : (
+                <Badge color="success" variant="light">
+                  All Active
+                </Badge>
+              )
+            }
+          />
+          <MetricCard
+            icon={<GlobeIcon />}
+            title="Platform Domains"
+            value={overview?.totalDomains ?? 0}
+            change={`${overview?.totalUsers ?? 0} Total Users`}
+            direction="up"
+          />
+          <MetricCard
+            icon={<UsersIcon />}
+            title="Port 25 MTA"
+            value={overview?.isPort25Active ? "ONLINE" : "OFFLINE"}
+            badge={
+              <Badge color={overview?.isPort25Active ? "success" : "error"} variant="light">
+                <span className={`size-1.5 rounded-full ${overview?.isPort25Active ? "bg-green-500 animate-pulse" : "bg-red-500"} mr-1.5`} />
+                {overview?.isPort25Active ? "Listening (25)" : "Stopped"}
               </Badge>
+            }
+          />
+        </div>
+
+        {/* Tenants Table (Full Width Card) */}
+        <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900 overflow-hidden shadow-theme-xs">
+          <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-semibold text-gray-800 dark:text-white/90">
+                Tenant Organizations
+              </h3>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                Sovereign multi-tenant email domains, users, and suspension enforcement.
+              </p>
             </div>
-          </CardHeader>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Organization</TableHead>
-                <TableHead>Slug & Routing</TableHead>
-                <TableHead>Primary Domain</TableHead>
-                <TableHead>Users</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Governance Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {tenants.map((org) => {
-                const isSuspended = org.status === "SUSPENDED";
-                return (
-                  <TableRow key={org.id} className={isSuspended ? "bg-destructive/5" : ""}>
-                    <TableCell className="font-medium text-sm">
-                      <div className="flex items-center gap-2">
-                        <Building className="size-4 text-muted-foreground" />
-                        <span>{org.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Link
-                        href={`/org/${org.slug}/admin`}
-                        className="font-mono text-xs text-primary hover:underline flex items-center gap-1"
-                      >
-                        /org/{org.slug}/admin
-                        <ExternalLink className="size-3" />
-                      </Link>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {org.primaryDomain}
-                    </TableCell>
-                    <TableCell className="text-xs font-mono">
-                      {org.usersCount} mailboxes
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={isSuspended ? "destructive" : "default"}
-                        className="text-[10px] font-semibold"
-                      >
-                        {isSuspended ? "SUSPENDED" : "ACTIVE"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      <Button
-                        variant={isSuspended ? "outline" : "ghost"}
-                        size="sm"
-                        onClick={() => handleToggleSuspend(org.id, org.status, org.name)}
-                        className={`text-xs h-7 px-2.5 ${
-                          isSuspended
-                            ? "border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/10"
-                            : "text-destructive hover:bg-destructive/10"
-                        }`}
-                      >
-                        {isSuspended ? (
-                          <span className="flex items-center gap-1">
-                            <PlayCircle className="size-3" /> Unsuspend
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1">
-                            <PauseCircle className="size-3" /> Suspend
-                          </span>
-                        )}
-                      </Button>
-                      <Link href={`/org/${org.slug}/admin`}>
-                        <Button size="sm" variant="secondary" className="text-xs h-7 px-2.5 gap-1">
-                          Manage Tenant
-                          <ArrowRight className="size-3" />
-                        </Button>
-                      </Link>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-              {tenants.length === 0 && (
+            <Badge variant="light" color="primary">
+              {tenants.length} Tenants
+            </Badge>
+          </div>
+
+          <div className="max-w-full overflow-x-auto">
+            <Table>
+              <TableHeader className="border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-white/2">
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground text-xs">
-                    No organizations onboarded yet. Click "Onboard New Organization" to get started.
+                  <TableCell isHeader className="px-6 py-3.5 text-start text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    Organization
+                  </TableCell>
+                  <TableCell isHeader className="px-6 py-3.5 text-start text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    Primary Domain
+                  </TableCell>
+                  <TableCell isHeader className="px-6 py-3.5 text-start text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    Status
+                  </TableCell>
+                  <TableCell isHeader className="px-6 py-3.5 text-start text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    Users
+                  </TableCell>
+                  <TableCell isHeader className="px-6 py-3.5 text-start text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    Domains
+                  </TableCell>
+                  <TableCell isHeader className="px-6 py-3.5 text-start text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    Storage Quota
+                  </TableCell>
+                  <TableCell isHeader className="px-6 py-3.5 text-end text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    Actions
                   </TableCell>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </Card>
-      </main>
+              </TableHeader>
 
-      {/* ONBOARD NEW TENANT MODAL */}
-      {showOnboard && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <Card className="w-full max-w-xl border-border bg-card shadow-2xl max-h-[90vh] flex flex-col">
-            <CardHeader className="shrink-0">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base font-semibold flex items-center gap-2">
-                  <Building className="size-4 text-primary" />
-                  Onboard New Tenant Organization
-                </CardTitle>
-                <Button variant="ghost" size="icon" className="size-7" onClick={() => setShowOnboard(false)}>
-                  ✕
-                </Button>
-              </div>
-              <CardDescription className="text-xs">
-                Provision a dedicated tenant with unique slug, custom domain, and tenant administrator.
-              </CardDescription>
-            </CardHeader>
-
-            <form onSubmit={handleOnboardSubmit} className="flex-1 overflow-y-auto flex flex-col">
-              <CardContent className="space-y-4 flex-1">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Organization Name *</Label>
-                    <Input
-                      required
-                      value={onboardForm.name}
-                      onChange={(e) => {
-                        const name = e.target.value;
-                        const autoSlug = name.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
-                        setOnboardForm({
-                          ...onboardForm,
-                          name,
-                          slug: onboardForm.slug ? onboardForm.slug : autoSlug,
-                        });
-                      }}
-                      placeholder="e.g. Acme Corporation"
-                      className="text-xs"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Unique URL Slug *</Label>
-                    <Input
-                      required
-                      value={onboardForm.slug}
-                      onChange={(e) =>
-                        setOnboardForm({
-                          ...onboardForm,
-                          slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
-                        })
-                      }
-                      placeholder="e.g. acme"
-                      className="text-xs font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="p-2 bg-muted/40 rounded border border-border/40 text-[11px] text-muted-foreground font-mono">
-                  Portal URL Preview: <span className="text-primary font-bold">/org/{onboardForm.slug || "<slug>"}/admin</span>
-                </div>
-
-                <div className="space-y-1">
-                  <Label className="text-xs">Primary Domain *</Label>
-                  <Input
-                    required
-                    value={onboardForm.domainName}
-                    onChange={(e) => setOnboardForm({ ...onboardForm, domainName: e.target.value.toLowerCase().trim() })}
-                    placeholder="e.g. acme.com"
-                    className="text-xs font-mono"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Tenant Admin Email *</Label>
-                    <Input
-                      required
-                      type="email"
-                      value={onboardForm.adminEmail}
-                      onChange={(e) => setOnboardForm({ ...onboardForm, adminEmail: e.target.value.toLowerCase().trim() })}
-                      placeholder="admin@acme.com"
-                      className="text-xs"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Admin Display Name</Label>
-                    <Input
-                      value={onboardForm.adminDisplayName}
-                      onChange={(e) => setOnboardForm({ ...onboardForm, adminDisplayName: e.target.value })}
-                      placeholder="Acme Admin"
-                      className="text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <Label className="text-xs">Initial Admin Password (min 8 chars) *</Label>
-                  <Input
-                    required
-                    type="password"
-                    value={onboardForm.adminPassword}
-                    onChange={(e) => setOnboardForm({ ...onboardForm, adminPassword: e.target.value })}
-                    placeholder="••••••••••••"
-                    className="text-xs font-mono"
-                  />
-                </div>
-
-                {/* Onboarding Success DNS Records Card */}
-                {onboardSuccess && (
-                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl space-y-3">
-                    <div className="flex items-center gap-1.5 font-semibold text-xs text-emerald-500">
-                      <CheckCircle2 className="size-4" />
-                      Tenant Provisioned! Required DNS Records:
-                    </div>
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {onboardSuccess.dnsRecords.map((rec: any, idx: number) => (
-                        <div key={idx} className="bg-card p-2 rounded border border-border/40 text-[11px] font-mono flex items-center justify-between">
-                          <div>
-                            <span className="font-bold text-primary mr-2">{rec.type}</span>
-                            <span className="text-muted-foreground mr-2">{rec.name}</span>
-                            <span className="text-foreground truncate max-w-xs">{rec.value}</span>
-                          </div>
+              <TableBody className="divide-y divide-gray-100 dark:divide-gray-800">
+                {tenants.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="px-6 py-12 text-center text-sm text-gray-500">
+                      No tenant organizations found.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  tenants.map((t) => (
+                    <TableRow key={t.id} className="hover:bg-gray-50/60 dark:hover:bg-white/3 transition-colors">
+                      <TableCell className="px-6 py-4">
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-sm text-gray-900 dark:text-white">
+                            {t.name}
+                          </span>
+                          <span className="text-xs font-mono text-gray-400">
+                            /{t.slug}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-6 py-4 font-mono text-xs text-gray-700 dark:text-gray-300">
+                        {t.primaryDomain || "—"}
+                      </TableCell>
+                      <TableCell className="px-6 py-4">
+                        <Badge
+                          variant="light"
+                          color={t.status === "ACTIVE" ? "success" : "error"}
+                          size="sm"
+                        >
+                          {t.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300 font-medium">
+                        {t.usersCount}
+                      </TableCell>
+                      <TableCell className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300 font-medium">
+                        {t.domainsCount}
+                      </TableCell>
+                      <TableCell className="px-6 py-4 text-xs font-mono text-gray-500 dark:text-gray-400">
+                        {formatBytes(t.maxStorageBytes)}
+                      </TableCell>
+                      <TableCell className="px-6 py-4 text-end">
+                        <div className="flex items-center justify-end gap-2">
                           <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-6 shrink-0"
-                            onClick={() => copyToClipboard(rec.value, `dns-${idx}`)}
+                            size="xs"
+                            variant="outline"
+                            onClick={() => handleToggleSuspend(t.id, t.status, t.name)}
+                            className={
+                              t.status === "ACTIVE"
+                                ? "text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                                : "text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950/30"
+                            }
                           >
-                            {copiedKey === `dns-${idx}` ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+                            {t.status === "ACTIVE" ? "Suspend" : "Unsuspend"}
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() => router.push(`/org/${t.slug}/admin`)}
+                            className="gap-1"
+                          >
+                            <span>Manage</span>
+                            <ArrowRightIcon className="size-3 rtl:-scale-x-100" />
                           </Button>
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
                 )}
-              </CardContent>
-
-              <CardFooter className="shrink-0 flex justify-end gap-2 border-t border-border/40 py-3">
-                <Button type="button" variant="ghost" size="sm" onClick={() => setShowOnboard(false)}>
-                  {onboardSuccess ? "Done" : "Cancel"}
-                </Button>
-                {!onboardSuccess && (
-                  <Button type="submit" size="sm" disabled={onboarding}>
-                    {onboarding ? "Provisioning..." : "Onboard Organization"}
-                  </Button>
-                )}
-              </CardFooter>
-            </form>
-          </Card>
+              </TableBody>
+            </Table>
+          </div>
         </div>
-      )}
-    </div>
+      </div>
+
+      {/* Onboard Organization Modal */}
+      <Dialog open={showOnboard} onOpenChange={setShowOnboard}>
+        <DialogContent className="sm:max-w-xl p-6">
+          <DialogHeader className="pb-3 border-b border-gray-100 dark:border-gray-800">
+            <DialogTitle className="text-base font-semibold text-gray-900 dark:text-white">
+              Onboard Sovereign Tenant
+            </DialogTitle>
+          </DialogHeader>
+
+          {onboardSuccess ? (
+            <div className="space-y-4 pt-3">
+              <div className="rounded-xl bg-green-50 p-4 text-green-800 dark:bg-green-950/30 dark:text-green-300 border border-green-200 dark:border-green-900/50">
+                <p className="font-semibold text-sm">Tenant successfully created!</p>
+                <p className="text-xs mt-1">DNS verification token and administrator credentials generated.</p>
+              </div>
+
+              <div className="space-y-3 font-mono text-xs">
+                <div className="p-3 bg-gray-50 rounded-xl dark:bg-white/5 space-y-1">
+                  <div className="text-gray-400">DNS Verification Token (TXT):</div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-900 dark:text-white select-all">
+                      {onboardSuccess.domain?.verificationToken}
+                    </span>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      onClick={() => copyToClipboard(onboardSuccess.domain?.verificationToken, "token")}
+                    >
+                      {copiedKey === "token" ? <CheckIcon className="size-3.5 text-green-500" /> : <CopyIcon className="size-3.5" />}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-gray-50 rounded-xl dark:bg-white/5 space-y-1">
+                  <div className="text-gray-400">Admin Initial Password:</div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-900 dark:text-white select-all">
+                      {onboardSuccess.adminUser?.temporaryPassword || "Password as configured"}
+                    </span>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      onClick={() => copyToClipboard(onboardSuccess.adminUser?.temporaryPassword || "", "pass")}
+                    >
+                      {copiedKey === "pass" ? <CheckIcon className="size-3.5 text-green-500" /> : <CopyIcon className="size-3.5" />}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <Button size="sm" onClick={() => setShowOnboard(false)}>
+                  Done
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleOnboardSubmit} className="space-y-4 pt-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                    Organization Name
+                  </label>
+                  <Input
+                    placeholder="Acme Corp"
+                    value={onboardForm.name}
+                    onChange={(e) => setOnboardForm({ ...onboardForm, name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                    Slug
+                  </label>
+                  <Input
+                    placeholder="acme"
+                    value={onboardForm.slug}
+                    onChange={(e) => setOnboardForm({ ...onboardForm, slug: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                  Primary Domain
+                </label>
+                <Input
+                  placeholder="acme.com"
+                  value={onboardForm.domainName}
+                  onChange={(e) => setOnboardForm({ ...onboardForm, domainName: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                    Admin Email
+                  </label>
+                  <Input
+                    type="email"
+                    placeholder="admin@acme.com"
+                    value={onboardForm.adminEmail}
+                    onChange={(e) => setOnboardForm({ ...onboardForm, adminEmail: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                    Admin Password
+                  </label>
+                  <Input
+                    type="password"
+                    placeholder="Temporary password"
+                    value={onboardForm.adminPassword}
+                    onChange={(e) => setOnboardForm({ ...onboardForm, adminPassword: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowOnboard(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" size="sm" disabled={onboarding}>
+                  {onboarding ? "Provisioning..." : "Onboard Organization"}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+    </AppLayout>
   );
 }

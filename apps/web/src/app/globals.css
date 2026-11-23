@@ -76,17 +76,63 @@
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.58 0.031 107.3);
   }
-  .theme {
-    --font-heading: var(--font-sans);
-    --font-sans: var(--font-sans);
-  }
+
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
   }
-  html {
-    @apply font-sans;
+}
+
+/* TailAdmin Pro UI Primitives & Navigation Classes */
+@layer components {
+  .menu-item {
+    @apply relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors;
+  }
+  .menu-item-active {
+    @apply bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400 font-semibold;
+  }
+  .menu-item-inactive {
+    @apply text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-white;
+  }
+  .menu-item-icon-active {
+    @apply text-brand-500 dark:text-brand-400;
+  }
+  .menu-item-icon-inactive {
+    @apply text-gray-500 group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300;
+  }
+  .menu-dropdown-item {
+    @apply relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors;
+  }
+  .menu-dropdown-item-active {
+    @apply bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400 font-semibold;
+  }
+  .menu-dropdown-item-inactive {
+    @apply text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/5;
+  }
+  .menu-dropdown-badge {
+    @apply block rounded-full px-2 py-0.5 text-[10px] font-semibold text-green-600 uppercase dark:text-green-400 bg-green-50 dark:bg-green-500/15;
+  }
+  .menu-dropdown-badge-active {
+    @apply bg-green-100 dark:bg-green-500/25;
+  }
+  .menu-dropdown-badge-inactive {
+    @apply bg-green-50 group-hover:bg-green-100 dark:bg-green-500/15;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(156, 163, 175, 0.4);
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(156, 163, 175, 0.6);
   }
 }

@@ -3,6 +3,9 @@
 import { useEffect, useState, useCallback, useMemo, useId } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import AppLayout from "@/layout/app-layout";
+import PageBreadcrumb from "@/components/common/page-breadcrumb";
+import MetricCard from "@/components/common/metric-card";
 import { rpcCall } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -466,93 +469,122 @@ export default function TenantAdminPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
+    <AppLayout>
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-2xl animate-in fade-in duration-200">
+        <div className="fixed bottom-6 right-6 z-50 rounded-xl bg-gray-900 px-4 py-2.5 text-xs font-medium text-white shadow-theme-xl dark:bg-white dark:text-gray-900 animate-in fade-in">
           {toast}
         </div>
       )}
 
-      {/* Top Header */}
-      <header className="h-14 border-b border-border bg-card/60 backdrop-blur-md px-4 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <Link href="/inbox">
-            <Button variant="ghost" size="sm" className="gap-1.5 text-xs">
-              <ArrowLeft className="size-3.5" />
-              Back to Mail
-            </Button>
-          </Link>
-          <Separator orientation="vertical" className="h-5" />
+      <div className="w-full min-w-0 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <PageBreadcrumb pageTitle={`${overview?.organizationName || slug} Administration`} />
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-sm">
-              {overview?.organizationName || "Organization"}
-            </span>
-            <Badge variant="outline" className="text-[10px] uppercase font-mono px-1.5 py-0">
-              {slug}
+            <Badge variant="light" color={overview?.status === "SUSPENDED" ? "error" : "primary"} size="sm" className="font-mono uppercase">
+              {slug} • {overview?.status || "ACTIVE"}
             </Badge>
-            {overview?.status === "SUSPENDED" && (
-              <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
-                SUSPENDED
-              </Badge>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadData}
+              disabled={loading}
+              className="gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={loadData} disabled={loading} className="gap-1 text-xs">
-            <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
+        {/* Global Metric Cards Grid (Full Width 4 Columns) */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6 xl:grid-cols-4">
+          <MetricCard
+            icon={<Globe className="size-6" />}
+            title="Verified Domains"
+            value={overview?.domainsCount ?? 0}
+            direction="up"
+          />
+          <MetricCard
+            icon={<Users className="size-6" />}
+            title="Mailbox Users"
+            value={overview?.usersCount ?? 0}
+            direction="up"
+          />
+          <MetricCard
+            icon={<HardDrive className="size-6" />}
+            title="Storage Engine"
+            value={overview?.storageProvider?.replace("_", " ") ?? "LOCAL FALLBACK"}
+            badge={
+              <Badge color="primary" variant="light">
+                {overview?.storageProvider || "LOCAL"}
+              </Badge>
+            }
+          />
+          <MetricCard
+            icon={<Server className="size-6" />}
+            title="Port 25 MTA"
+            value="ONLINE"
+            badge={
+              <Badge color="success" variant="light">
+                <span className="size-1.5 rounded-full bg-green-500 animate-pulse mr-1.5" />
+                Listening (25)
+              </Badge>
+            }
+          />
         </div>
-      </header>
 
-      {/* Main Container */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-        {/* Navigation Sidebar */}
-        <aside className="w-full md:w-56 border-r border-border bg-muted/20 p-3 shrink-0 flex flex-row md:flex-col gap-1 overflow-x-auto">
-          {[
-            { id: "overview", label: "Overview", icon: Server },
-            { id: "domains", label: "Domains & DNS", icon: Globe, count: domains.length },
-            { id: "users", label: "Users & Mailboxes", icon: Users, count: users.length },
-            { id: "policies", label: "Policies & Quotas", icon: Sliders },
-            { id: "templates", label: "Templates & Campaigns", icon: Sparkles, count: templates.length },
-            { id: "storage", label: "Storage (BYOS)", icon: HardDrive },
-            { id: "branding", label: "Branding", icon: Palette },
-            { id: "apikeys", label: "API Keys", icon: Key, count: apiKeys.length },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap text-left ${
-                  active
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Icon className="size-4" />
-                  <span>{tab.label}</span>
-                </div>
-                {tab.count !== undefined && (
-                  <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                      active ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"
+        {/* Main Content Layout (Responsive Sidebar + Full Width Content) */}
+        <div className="flex flex-col xl:flex-row gap-5 items-start">
+          {/* Navigation Sidebar */}
+          <aside className="w-full xl:w-65 shrink-0 rounded-2xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900 shadow-theme-xs">
+            <h4 className="mb-2.5 px-3 text-[11px] font-semibold tracking-wider text-gray-400 uppercase">
+              GOVERNANCE TABS
+            </h4>
+            <div className="flex flex-row xl:flex-col gap-1 overflow-x-auto custom-scrollbar">
+              {[
+                { id: "overview", label: "Overview", icon: Server },
+                { id: "domains", label: "Domains & DNS", icon: Globe, count: domains.length },
+                { id: "users", label: "Users & Mailboxes", icon: Users, count: users.length },
+                { id: "policies", label: "Policies & Quotas", icon: Sliders },
+                { id: "templates", label: "Templates & Campaigns", icon: Sparkles, count: templates.length },
+                { id: "storage", label: "Storage (BYOS)", icon: HardDrive },
+                { id: "branding", label: "Branding", icon: Palette },
+                { id: "apikeys", label: "API Keys", icon: Key, count: apiKeys.length },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const active = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as any)}
+                    className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors whitespace-nowrap text-left cursor-pointer ${
+                      active
+                        ? "bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400 font-semibold shadow-xs"
+                        : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/5"
                     }`}
                   >
-                    {tab.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </aside>
+                    <div className="flex items-center gap-2.5">
+                      <Icon className={`size-4 ${active ? "text-brand-500 dark:text-brand-400" : "text-gray-400"}`} />
+                      <span>{tab.label}</span>
+                    </div>
+                    {tab.count !== undefined && (
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                          active ? "bg-brand-500 text-white" : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
 
-        {/* Content Pane */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 max-w-5xl">
+          {/* Full-Width Content Pane (NO max-w-5xl!) */}
+          <main className="flex-1 min-w-0 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 md:p-6 dark:border-gray-800 dark:bg-gray-900 shadow-theme-xs">
           {/* 1. OVERVIEW */}
           {activeTab === "overview" && (
             <div className="space-y-6">
@@ -605,7 +637,12 @@ export default function TenantAdminPage() {
                   </div>
                   <div className="flex justify-between items-center py-1">
                     <span className="text-muted-foreground">Account Status:</span>
-                    <Badge variant={overview?.status === "ACTIVE" ? "default" : "destructive"} className="text-[10px]">
+                    <Badge
+                      color={overview?.status === "ACTIVE" ? "success" : "error"}
+                      variant="light"
+                      size="sm"
+                      className="text-[10px]"
+                    >
                       {overview?.status || "ACTIVE"}
                     </Badge>
                   </div>
@@ -1368,6 +1405,7 @@ export default function TenantAdminPage() {
           )}
         </main>
       </div>
+      </div>
 
       {/* CREATE TEMPLATE MODAL */}
       {showCreateTemplate && (
@@ -1636,6 +1674,6 @@ export default function TenantAdminPage() {
           </Card>
         </div>
       )}
-    </div>
+    </AppLayout>
   );
 }
