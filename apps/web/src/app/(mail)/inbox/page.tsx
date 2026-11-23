@@ -904,25 +904,23 @@ export default function InboxPage() {
 
             {/* User Account Popover Trigger */}
             <Popover>
-              <PopoverTrigger asChild>
-                <button className="w-full flex items-center justify-between p-2 rounded-xl bg-card border border-border/60 hover:border-border transition-colors text-left group">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <Avatar className={`size-8 text-xs font-bold text-white shrink-0 ${getAvatarColorForEmail(user?.email || "")}`}>
-                      <AvatarFallback className="bg-transparent text-white font-bold">
-                        {user?.email?.[0]?.toUpperCase() || "U"}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-semibold truncate leading-tight">
-                        {user?.displayName || user?.email?.split("@")[0]}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground font-mono truncate">
-                        {user?.email}
-                      </div>
+              <PopoverTrigger className="w-full flex items-center justify-between p-2 rounded-xl bg-card border border-border/60 hover:border-border transition-colors text-left group cursor-pointer">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Avatar className={`size-8 text-xs font-bold text-white shrink-0 ${getAvatarColorForEmail(user?.email || "")}`}>
+                    <AvatarFallback className="bg-transparent text-white font-bold">
+                      {user?.email?.[0]?.toUpperCase() || "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-semibold truncate leading-tight">
+                      {user?.displayName || user?.email?.split("@")[0]}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground font-mono truncate">
+                      {user?.email}
                     </div>
                   </div>
-                  <ChevronsUpDown className="size-3.5 text-muted-foreground group-hover:text-foreground shrink-0" />
-                </button>
+                </div>
+                <ChevronsUpDown className="size-3.5 text-muted-foreground group-hover:text-foreground shrink-0" />
               </PopoverTrigger>
 
               <PopoverContent side="top" align="start" className="w-80 p-3 space-y-3 shadow-2xl">

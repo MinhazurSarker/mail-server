@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { generateThemeCss } from "@/lib/theme";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
+const inter = Inter({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
   title: "CellsInbox — Enterprise Mail",
@@ -46,10 +46,12 @@ export default async function RootLayout({
     // Fallback gracefully during build or if API server is booting
   }
 
-  const dynamicCss = generateThemeCss({
-    primaryColor: branding.primaryColor,
-    roundness: "rounded",
-  });
+  const dynamicCss = branding.isCustom
+    ? generateThemeCss({
+        primaryColor: branding.primaryColor,
+        roundness: "rounded",
+      })
+    : "";
 
   return (
     <html lang="en" className={cn("dark", "font-sans", inter.variable)} suppressHydrationWarning>
@@ -57,14 +59,16 @@ export default async function RootLayout({
         {branding.faviconUrl && (
           <link rel="icon" href={branding.faviconUrl} />
         )}
-        {/* Dynamic Tenant Theming Engine (CellsCommerce Trick) */}
-        <style
-          id="cellsinbox-dynamic-theme"
-          suppressHydrationWarning
-          dangerouslySetInnerHTML={{
-            __html: dynamicCss,
-          }}
-        />
+        {/* Dynamic Tenant Theming Engine (Only when custom branding configured) */}
+        {dynamicCss ? (
+          <style
+            id="cellsinbox-dynamic-theme"
+            suppressHydrationWarning
+            dangerouslySetInnerHTML={{
+              __html: dynamicCss,
+            }}
+          />
+        ) : null}
       </head>
       <body className="min-h-screen bg-background font-sans text-foreground antialiased selection:bg-primary selection:text-primary-foreground">
         <TooltipProvider>{children}</TooltipProvider>
