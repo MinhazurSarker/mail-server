@@ -8,7 +8,9 @@ export const metadata = {
 
 export const contentType = "application/json" as const;
 
-export const inputSchema = Type.Object({});
+export const inputSchema = Type.Object({
+  slug: Type.Optional(Type.String()),
+});
 
 export const outputSchema = Type.Object({
   logoUrl: Type.Optional(Type.String()),

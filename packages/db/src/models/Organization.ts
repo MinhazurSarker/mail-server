@@ -34,6 +34,9 @@ export interface IOrganization extends Document {
     spamThresholdScore?: number;
     rejectUnverifiableSpf?: boolean;
     rejectUnverifiableDkim?: boolean;
+    maxSingleFileSizeBytes?: number;
+    maxAttachmentCount?: number;
+    defaultUserStorageBytes?: number;
   };
   maxDomains: number;
   maxUsers: number;
@@ -73,6 +76,9 @@ const OrganizationSchema = new Schema<IOrganization>(
       spamThresholdScore: { type: Number, default: 5 },
       rejectUnverifiableSpf: { type: Boolean, default: false },
       rejectUnverifiableDkim: { type: Boolean, default: false },
+      maxSingleFileSizeBytes: { type: Number, default: 26214400 }, // 25 MB default (-1 = unlimited)
+      maxAttachmentCount: { type: Number, default: 10 }, // 10 attachments default (-1 = unlimited)
+      defaultUserStorageBytes: { type: Number, default: 10737418240 }, // 10 GB default (-1 = unlimited)
     },
     branding: {
       logoUrl: { type: String, trim: true },

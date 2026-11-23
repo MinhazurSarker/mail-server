@@ -17,6 +17,13 @@ export const outputSchema = Type.Object({
   organizationId: Type.String(),
   domainId: Type.String(),
   email: Type.String(),
+  displayName: Type.Optional(Type.String()),
   role: Type.String(),
   status: Type.String(),
+  orgSlug: Type.Optional(Type.String()),
+  orgName: Type.Optional(Type.String()),
+  storageQuotaBytes: Type.Optional(Type.Number()),
+  storageUsedBytes: Type.Optional(Type.Number()),
+  maxSingleFileSizeBytes: Type.Optional(Type.Number()),
+  maxAttachmentCount: Type.Optional(Type.Number()),
 });

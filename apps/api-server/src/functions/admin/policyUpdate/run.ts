@@ -16,6 +16,17 @@ export const run = async (
     throw new Error("Unauthorized: Admin permissions required.");
   }
 
-  await OrganizationService.updatePolicyConfig(authUser.organizationId, input);
+  let orgId = authUser.organizationId;
+  if (input.slug) {
+    const org = await OrganizationService.resolveOrg(input.slug);
+    if (!org) throw new Error(`Organization '${input.slug}' not found.`);
+    if (authUser.role !== "PLATFORM_ADMIN" && org._id.toString() !== authUser.organizationId) {
+      throw new Error("Access denied to this organization.");
+    }
+    orgId = org._id.toString();
+  }
+
+  const { slug, ...policyData } = input;
+  await OrganizationService.updatePolicyConfig(orgId, policyData);
   return { success: true };
 };

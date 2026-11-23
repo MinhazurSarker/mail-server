@@ -41,6 +41,17 @@ export const OrganizationBrandingSchema = Type.Object({
 });
 export type OrganizationBranding = Static<typeof OrganizationBrandingSchema>;
 
+export const OrganizationPolicyConfigSchema = Type.Object({
+  enforceTwoFactor: Type.Optional(Type.Boolean({ default: true })),
+  spamThresholdScore: Type.Optional(Type.Number({ default: 5 })),
+  rejectUnverifiableSpf: Type.Optional(Type.Boolean({ default: false })),
+  rejectUnverifiableDkim: Type.Optional(Type.Boolean({ default: false })),
+  maxSingleFileSizeBytes: Type.Optional(Type.Number({ default: 26214400 })),
+  maxAttachmentCount: Type.Optional(Type.Number({ default: 10 })),
+  defaultUserStorageBytes: Type.Optional(Type.Number({ default: 10737418240 })),
+});
+export type OrganizationPolicyConfig = Static<typeof OrganizationPolicyConfigSchema>;
+
 export const OrganizationSchema = Type.Object({
   id: Type.String(),
   name: Type.String({ minLength: 2 }),
@@ -50,6 +61,7 @@ export const OrganizationSchema = Type.Object({
   customWebmailDomains: Type.Optional(Type.Array(Type.String())),
   storageConfig: Type.Optional(StorageConfigSchema),
   sesBackupConfig: Type.Optional(SesBackupConfigSchema),
+  policyConfig: Type.Optional(OrganizationPolicyConfigSchema),
   maxDomains: Type.Number({ default: 5 }),
   maxUsers: Type.Number({ default: 50 }),
   maxStorageBytes: Type.Number({ default: 107374182400 }), // 100GB default quota

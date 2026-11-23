@@ -1,6 +1,8 @@
 import { Type } from "@sinclair/typebox";
 
-export const inputSchema = Type.Object({});
+export const inputSchema = Type.Object({
+  slug: Type.Optional(Type.String()),
+});
 
 export const outputSchema = Type.Object({
   provider: Type.String(),

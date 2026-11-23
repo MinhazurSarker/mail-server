@@ -45,6 +45,7 @@ export const outputSchema = Type.Object({
   date: Type.Union([Type.String(), Type.Date()]),
   hasAttachments: Type.Boolean(),
   sizeBytes: Type.Number(),
+  labels: Type.Optional(Type.Array(Type.String())),
   body: Type.Object({
     text: Type.String(),
     html: Type.String(),

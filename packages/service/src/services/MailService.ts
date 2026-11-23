@@ -27,6 +27,7 @@ export interface MailboxItem {
   hasAttachments: boolean;
   sizeBytes: number;
   snippet: string;
+  labels?: string[];
 }
 
 export interface MailboxListResult {
@@ -55,6 +56,7 @@ export interface MessageDetailResult {
   date: Date;
   hasAttachments: boolean;
   sizeBytes: number;
+  labels?: string[];
   body: {
     text: string;
     html: string;
@@ -291,6 +293,7 @@ export class MailService {
         hasAttachments: msg?.hasAttachments || false,
         sizeBytes: msg?.sizeBytes || 0,
         snippet: snippetMap.get(msgIdStr) || "",
+        labels: s.labels || [],
       };
     });
 
@@ -408,6 +411,7 @@ export class MailService {
         snippet: body?.snippet || "",
       },
       attachments: attachmentList,
+      labels: state.labels || [],
     };
   }
 
@@ -420,11 +424,13 @@ export class MailService {
     folder?: string;
     isRead?: boolean;
     isStarred?: boolean;
+    labels?: string[];
   }): Promise<boolean> {
     const update: Record<string, any> = {};
     if (params.folder) update.folder = params.folder.toUpperCase();
     if (typeof params.isRead === "boolean") update.isRead = params.isRead;
     if (typeof params.isStarred === "boolean") update.isStarred = params.isStarred;
+    if (params.labels !== undefined) update.labels = params.labels;
 
     let targetMessageId = params.messageId;
     if (!isValidObjectId(params.messageId)) {

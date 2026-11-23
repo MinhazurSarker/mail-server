@@ -8,7 +8,7 @@ type Input = Static<typeof inputSchema>;
 type Output = Static<typeof outputSchema>;
 
 export const run = async (
-  _input: Input,
+  input: Input,
   context: MiddlewareContext & { auth?: AuthContext },
 ): Promise<Output> => {
   const authUser = context.auth;
@@ -16,7 +16,17 @@ export const run = async (
     throw new Error("Unauthorized: Admin permissions required.");
   }
 
-  const res = await OrganizationService.getBranding(authUser.organizationId);
+  let orgId = authUser.organizationId;
+  if (input?.slug) {
+    const org = await OrganizationService.resolveOrg(input.slug);
+    if (!org) throw new Error(`Organization '${input.slug}' not found.`);
+    if (authUser.role !== "PLATFORM_ADMIN" && org._id.toString() !== authUser.organizationId) {
+      throw new Error("Access denied to this organization.");
+    }
+    orgId = org._id.toString();
+  }
+
+  const res = await OrganizationService.getBranding(orgId);
   return {
     logoUrl: res.branding?.logoUrl,
     faviconUrl: res.branding?.faviconUrl,

@@ -1,7 +1,7 @@
 import type { Static } from "@sinclair/typebox";
 import type { MiddlewareContext } from "@cellsweb/rpc-core";
 import { UserService, AuthService } from "@cellsinbox/service";
-import { CredentialModel } from "@cellsinbox/db";
+import { CredentialModel, OrganizationModel } from "@cellsinbox/db";
 import type { inputSchema, outputSchema } from "./constants.js";
 
 type Input = Static<typeof inputSchema>;
@@ -27,6 +27,13 @@ export const run = async (
   const user = await UserService.getById(cred.userId.toString());
   if (!user) {
     throw new Error("User associated with this Passkey not found.");
+  }
+
+  if (user.role !== "PLATFORM_ADMIN") {
+    const org = await OrganizationModel.findById(user.organizationId);
+    if (org && org.status === "SUSPENDED") {
+      throw new Error("This organization has been suspended by platform administration. Contact support.");
+    }
   }
 
   const host = (context.req?.headers?.host as string) || undefined;

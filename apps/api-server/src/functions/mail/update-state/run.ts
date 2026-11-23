@@ -16,12 +16,16 @@ export const run = async (
     throw new Error("Unauthorized: Session required.");
   }
 
+  const targetId = input.id || input.messageId;
+  if (!targetId) throw new Error("messageId or id required.");
+
   const success = await MailService.updateMailboxState({
     userId: authUser.userId,
-    messageId: input.messageId,
+    messageId: targetId,
     folder: input.folder,
     isRead: input.isRead,
     isStarred: input.isStarred,
+    labels: input.labels,
   });
 
   return { success };

@@ -32,6 +32,7 @@ export const outputSchema = Type.Object({
       hasAttachments: Type.Boolean(),
       sizeBytes: Type.Number(),
       snippet: Type.String(),
+      labels: Type.Optional(Type.Array(Type.String())),
     }),
   ),
   total: Type.Number(),

@@ -8,7 +8,7 @@ import {
   type RegistrationResponseJSON,
   type AuthenticationResponseJSON,
 } from "@simplewebauthn/server";
-import { UserModel, CredentialModel, type IUser, type ICredential } from "@cellsinbox/db";
+import { UserModel, CredentialModel, OrganizationModel, type IUser, type ICredential } from "@cellsinbox/db";
 import { authenticator } from "otplib";
 import { env } from "@cellsinbox/env";
 
@@ -73,6 +73,13 @@ export class AuthService {
 
     if (user.status === "SUSPENDED" || user.status === "LOCKED") {
       throw new Error(`Account is ${user.status.toLowerCase()}. Please contact your organization administrator.`);
+    }
+
+    if (user.role !== "PLATFORM_ADMIN") {
+      const org = await OrganizationModel.findById(user.organizationId);
+      if (org && org.status === "SUSPENDED") {
+        throw new Error("This organization has been suspended by platform administration. Contact support.");
+      }
     }
 
     const isValid = await argon2.verify(user.passwordHash, passwordPlain);

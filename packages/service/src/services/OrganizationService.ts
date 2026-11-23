@@ -1,5 +1,5 @@
 import argon2 from "argon2";
-import { OrganizationModel, DomainModel, UserModel, type IOrganization, type IOrganizationBranding, type IDomain, type IUser } from "@cellsinbox/db";
+import { OrganizationModel, DomainModel, UserModel, type IOrganization, type IOrganizationBranding, type IDomain, type IUser, isValidObjectId } from "@cellsinbox/db";
 import type { StorageConfig } from "@cellsinbox/schema";
 import { StorageService } from "./StorageService.js";
 import { DomainService } from "./DomainService.js";
@@ -126,6 +126,15 @@ export class OrganizationService {
     return await org.save();
   }
 
+  static async resolveOrg(slugOrId: string): Promise<IOrganization | null> {
+    if (!slugOrId) return null;
+    if (isValidObjectId(slugOrId)) {
+      const byId = await OrganizationModel.findById(slugOrId);
+      if (byId) return byId;
+    }
+    return await OrganizationModel.findOne({ slug: slugOrId.toLowerCase().trim() });
+  }
+
   static async getById(id: string): Promise<IOrganization | null> {
     return await OrganizationModel.findById(id);
   }
@@ -201,6 +210,10 @@ export class OrganizationService {
       spamThresholdScore?: number;
       rejectUnverifiableSpf?: boolean;
       rejectUnverifiableDkim?: boolean;
+      maxSingleFileSizeBytes?: number;
+      maxAttachmentCount?: number;
+      defaultUserStorageBytes?: number;
+      maxStorageBytes?: number;
     },
   ): Promise<IOrganization> {
     const update: Record<string, any> = {};
@@ -215,6 +228,18 @@ export class OrganizationService {
     }
     if (config.rejectUnverifiableDkim !== undefined) {
       update["policyConfig.rejectUnverifiableDkim"] = config.rejectUnverifiableDkim;
+    }
+    if (config.maxSingleFileSizeBytes !== undefined) {
+      update["policyConfig.maxSingleFileSizeBytes"] = config.maxSingleFileSizeBytes;
+    }
+    if (config.maxAttachmentCount !== undefined) {
+      update["policyConfig.maxAttachmentCount"] = config.maxAttachmentCount;
+    }
+    if (config.defaultUserStorageBytes !== undefined) {
+      update["policyConfig.defaultUserStorageBytes"] = config.defaultUserStorageBytes;
+    }
+    if (config.maxStorageBytes !== undefined) {
+      update["maxStorageBytes"] = config.maxStorageBytes;
     }
 
     const org = await OrganizationModel.findByIdAndUpdate(
@@ -231,6 +256,10 @@ export class OrganizationService {
     spamThresholdScore: number;
     rejectUnverifiableSpf: boolean;
     rejectUnverifiableDkim: boolean;
+    maxSingleFileSizeBytes: number;
+    maxAttachmentCount: number;
+    defaultUserStorageBytes: number;
+    maxStorageBytes: number;
   }> {
     const org = await OrganizationModel.findById(id);
     if (!org) throw new Error("Organization not found.");
@@ -239,6 +268,10 @@ export class OrganizationService {
       spamThresholdScore: org.policyConfig?.spamThresholdScore ?? 5,
       rejectUnverifiableSpf: org.policyConfig?.rejectUnverifiableSpf === true,
       rejectUnverifiableDkim: org.policyConfig?.rejectUnverifiableDkim === true,
+      maxSingleFileSizeBytes: org.policyConfig?.maxSingleFileSizeBytes ?? 26214400, // 25MB
+      maxAttachmentCount: org.policyConfig?.maxAttachmentCount ?? 10,
+      defaultUserStorageBytes: org.policyConfig?.defaultUserStorageBytes ?? 10737418240, // 10GB
+      maxStorageBytes: org.maxStorageBytes ?? 107374182400, // 100GB
     };
   }
 

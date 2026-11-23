@@ -15,3 +15,4 @@ export * from "./entities/user.js";
 export * from "./entities/credential.js";
 export * from "./entities/apiKey.js";
 export * from "./entities/message.js";
+export * from "./entities/template.js";

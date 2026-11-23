@@ -7,6 +7,7 @@
 import type { Static } from "@sinclair/typebox";
 import { AppError, ErrorCode, type MiddlewareFn } from "@cellsweb/rpc-core";
 import { AuthService, ApiKeyService } from "@cellsinbox/service";
+import { OrganizationModel } from "@cellsinbox/db";
 import { AuthContextSchema, type UserRole } from "./constants.js";
 
 export type AuthContext = Static<typeof AuthContextSchema>;
@@ -84,6 +85,17 @@ export const run: MiddlewareFn<AuthMiddlewareOptions> = async (
         ErrorCode.FORBIDDEN,
         `Insufficient permissions: Requires role [${roles.join(", ")}]`,
       );
+    }
+
+    // Check organization suspension
+    if (authContext.role !== "PLATFORM_ADMIN" && authContext.organizationId) {
+      const org = await OrganizationModel.findById(authContext.organizationId);
+      if (org && org.status === "SUSPENDED") {
+        throw new AppError(
+          ErrorCode.FORBIDDEN,
+          "This organization has been suspended by platform administration. Contact support.",
+        );
+      }
     }
   }
 

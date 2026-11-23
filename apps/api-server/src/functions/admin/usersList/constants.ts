@@ -1,6 +1,8 @@
 import { Type } from "@sinclair/typebox";
 
-export const inputSchema = Type.Object({});
+export const inputSchema = Type.Object({
+  slug: Type.Optional(Type.String()),
+});
 
 export const outputSchema = Type.Object({
   items: Type.Array(
@@ -11,6 +13,8 @@ export const outputSchema = Type.Object({
       role: Type.String(),
       status: Type.String(),
       twoFactorEnforced: Type.Boolean(),
+      storageQuotaBytes: Type.Optional(Type.Number()),
+      storageUsedBytes: Type.Optional(Type.Number()),
       createdAt: Type.String(),
     }),
   ),

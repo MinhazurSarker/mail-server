@@ -3,8 +3,17 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { rpcCall } from "@/lib/api";
+import { rpcCall, API_BASE_URL } from "@/lib/api";
 import { useMailSocket, type MailEventPayload, type MailStateChangedPayload } from "@/lib/useMailSocket";
+import {
+  getStoredAccounts,
+  getActiveAccount,
+  saveAccount,
+  switchAccount as switchStoreAccount,
+  removeAccount,
+  getAvatarColorForEmail,
+  type StoredAccount,
+} from "@/lib/account-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +22,14 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter, CardDescription } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import {
   Mail,
   Send,
@@ -24,6 +41,9 @@ import {
   Search,
   RefreshCw,
   Reply,
+  ReplyAll,
+  Forward,
+  Archive,
   Settings,
   LogOut,
   Edit3,
@@ -53,19 +73,40 @@ import {
   Sparkles,
   Lock,
   ChevronDown,
+  ChevronsUpDown,
   Moon,
   Sun,
   Flame,
   ArrowRight,
-  HelpCircle,
+  ArrowLeft,
+  Menu,
+  MoreVertical,
+  Printer,
+  FileImage,
+  FileSpreadsheet,
+  FileArchive,
   FileCode,
+  File as FileIcon,
+  Download,
+  Plus,
+  Tag,
+  ShieldAlert,
+  Infinity as InfinityIcon,
+  HelpCircle,
 } from "lucide-react";
 
 interface UserProfile {
   userId: string;
   email: string;
+  displayName?: string;
   role: string;
   organizationId: string;
+  orgSlug?: string;
+  orgName?: string;
+  storageQuotaBytes?: number;
+  storageUsedBytes?: number;
+  maxSingleFileSizeBytes?: number;
+  maxAttachmentCount?: number;
 }
 
 interface MailItem {
@@ -81,6 +122,7 @@ interface MailItem {
   hasAttachments: boolean;
   sizeBytes: number;
   snippet: string;
+  labels?: string[];
 }
 
 interface MessageDetail {
@@ -101,6 +143,7 @@ interface MessageDetail {
   date: string;
   hasAttachments: boolean;
   sizeBytes: number;
+  labels?: string[];
   body: {
     text: string;
     html: string;
@@ -124,10 +167,64 @@ interface MailboxStats {
   trash: number;
 }
 
+interface TemplateItem {
+  id: string;
+  name: string;
+  subject: string;
+  bodyHtml: string;
+  bodyText: string;
+  variables: string[];
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === -1) return "Unlimited";
+  if (!bytes || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function getAttachmentIcon(type: string, name: string) {
+  const mime = (type || "").toLowerCase();
+  const ext = (name || "").split(".").pop()?.toLowerCase() || "";
+
+  if (mime.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext)) {
+    return { icon: FileImage, color: "text-purple-500", bg: "bg-purple-500/10" };
+  }
+  if (mime.includes("pdf") || ext === "pdf") {
+    return { icon: FileText, color: "text-red-500", bg: "bg-red-500/10" };
+  }
+  if (mime.includes("spreadsheet") || mime.includes("excel") || ["xls", "xlsx", "csv"].includes(ext)) {
+    return { icon: FileSpreadsheet, color: "text-emerald-500", bg: "bg-emerald-500/10" };
+  }
+  if (mime.includes("zip") || mime.includes("compressed") || ["zip", "rar", "7z", "tar", "gz"].includes(ext)) {
+    return { icon: FileArchive, color: "text-amber-500", bg: "bg-amber-500/10" };
+  }
+  return { icon: FileIcon, color: "text-sky-500", bg: "bg-sky-500/10" };
+}
+
+const COLOR_TAGS = [
+  { id: "vip", name: "VIP", color: "text-purple-400 bg-purple-500/15 border-purple-500/30", dot: "bg-purple-500" },
+  { id: "urgent", name: "Urgent", color: "text-red-400 bg-red-500/15 border-red-500/30", dot: "bg-red-500" },
+  { id: "work", name: "Work", color: "text-blue-400 bg-blue-500/15 border-blue-500/30", dot: "bg-blue-500" },
+  { id: "invoices", name: "Invoices", color: "text-amber-400 bg-amber-500/15 border-amber-500/30", dot: "bg-amber-500" },
+  { id: "personal", name: "Personal", color: "text-emerald-400 bg-emerald-500/15 border-emerald-500/30", dot: "bg-emerald-500" },
+  { id: "projects", name: "Projects", color: "text-cyan-400 bg-cyan-500/15 border-cyan-500/30", dot: "bg-cyan-500" },
+];
+
 export default function InboxPage() {
   const router = useRouter();
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Multi-Account state
+  const [accounts, setAccounts] = useState<StoredAccount[]>([]);
+  const [activeAccount, setActiveAccountState] = useState<StoredAccount | null>(null);
+
+  // Mobile layout state
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   // Mailbox view state
   const [folder, setFolder] = useState<string>("INBOX");
@@ -144,495 +241,430 @@ export default function InboxPage() {
   const [activeMessage, setActiveMessage] = useState<MessageDetail | null>(null);
   const [loadingMessage, setLoadingMessage] = useState(false);
   const [filterUnreadOnly, setFilterUnreadOnly] = useState(false);
+  const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [bodyFormat, setBodyFormat] = useState<"html" | "text">("html");
+  const [loadRemoteImages, setLoadRemoteImages] = useState(false);
 
-  // Batch multi-selection state
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [batchActionLoading, setBatchActionLoading] = useState(false);
+  // Batch multi-selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Modal dialog states
-  const [showSecurityModal, setShowSecurityModal] = useState(false);
-  const [showRawModal, setShowRawModal] = useState(false);
-  const [copiedRaw, setCopiedRaw] = useState(false);
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [commandQuery, setCommandQuery] = useState("");
-  const [activeCommandIndex, setActiveCommandIndex] = useState(0);
-
-  // Advanced Compose state
+  // Composer state
   const [showCompose, setShowCompose] = useState(false);
   const [composeTo, setComposeTo] = useState("");
   const [composeCc, setComposeCc] = useState("");
   const [composeBcc, setComposeBcc] = useState("");
-  const [showCc, setShowCc] = useState(false);
-  const [showBcc, setShowBcc] = useState(false);
-  const [composePriority, setComposePriority] = useState<"normal" | "high">("normal");
+  const [showCcBcc, setShowCcBcc] = useState(false);
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
-  const [composeAttachments, setComposeAttachments] = useState<File[]>([]);
-  const [sendingMail, setSendingMail] = useState(false);
-  const [contactSuggestions, setContactSuggestions] = useState<Array<{ id: string; name: string; email: string; company?: string }>>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isHighPriority, setIsHighPriority] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [composeAttachments, setComposeAttachments] = useState<Array<{ name: string; size: number; file: File }>>([]);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const composeTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const commandInputRef = useRef<HTMLInputElement>(null);
+  // Templates
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
 
-  // Notification Toast state
+  // Modals & Raw EML Viewer
+  const [showEmlViewer, setShowEmlViewer] = useState(false);
+  const [rawEmlCopied, setRawEmlCopied] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState<any | null>(null);
+
+  // Toast feedback
   const [toast, setToast] = useState<string | null>(null);
-  const showToast = useCallback((msg: string) => {
+  const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 4000);
+  };
+
+  // Window resize listener for responsive state
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // Fetch mailbox list
-  const loadMessages = useCallback(async (targetFolder: string, search: string = "") => {
+  // Sync stored accounts list
+  const refreshAccountsList = useCallback(() => {
+    setAccounts(getStoredAccounts());
+    setActiveAccountState(getActiveAccount());
+  }, []);
+
+  // Fetch authenticated user profile
+  const fetchUserProfile = useCallback(async () => {
     try {
-      const res = await rpcCall<{ items: MailItem[]; total: number; unreadCount: number }>(
-        "mail",
-        "list",
-        {
-          folder: targetFolder,
-          search: search || undefined,
-          limit: 50,
-        },
-      );
-      setMessages(res.items || []);
-    } catch (err) {
-      console.error("Failed to load messages:", err);
-    }
-  }, []);
+      const res = await rpcCall<UserProfile>("auth", "me", {});
+      setUser(res);
 
-  // Fetch mailbox stats (unread counts)
-  const loadStats = useCallback(async () => {
+      // Register or update active account in account store
+      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") || "" : "";
+      if (token && res.userId) {
+        saveAccount({
+          userId: res.userId,
+          email: res.email,
+          displayName: res.displayName,
+          role: res.role,
+          orgSlug: res.orgSlug,
+          orgName: res.orgName,
+          token,
+          avatarColor: getAvatarColorForEmail(res.email),
+        });
+        refreshAccountsList();
+      }
+      return res;
+    } catch {
+      router.push("/login");
+      return null;
+    }
+  }, [router, refreshAccountsList]);
+
+  // Fetch mailbox messages
+  const fetchMessages = useCallback(
+    async (targetFolder: string) => {
+      try {
+        const res = await rpcCall<{ items: MailItem[]; total: number }>("mail", "list", {
+          folder: targetFolder,
+          page: 1,
+          limit: 100,
+        });
+        setMessages(res.items || []);
+      } catch (err: any) {
+        showToast(err.message || "Failed to load messages.");
+      }
+    },
+    [],
+  );
+
+  // Fetch mailbox counters
+  const fetchStats = useCallback(async () => {
     try {
       const res = await rpcCall<MailboxStats>("mail", "stats", {});
       setStats(res);
-    } catch (err) {
-      console.error("Failed to load stats:", err);
-    }
+    } catch {}
   }, []);
 
-  // Fetch single message details
-  const loadMessageDetail = useCallback(async (messageId: string) => {
-    setLoadingMessage(true);
+  // Fetch templates for insert
+  const fetchTemplates = useCallback(async () => {
     try {
-      const res = await rpcCall<MessageDetail>("mail", "get", { messageId, markAsRead: true });
-      setActiveMessage(res);
-
-      setMessages((prev) =>
-        prev.map((m) => (m.messageId === messageId ? { ...m, isRead: true } : m)),
-      );
-      setStats((prev) => ({
-        ...prev,
-        inboxUnread: Math.max(0, prev.inboxUnread - 1),
-      }));
-    } catch (err) {
-      console.error("Failed to load message detail:", err);
-    } finally {
-      setLoadingMessage(false);
-    }
+      const res = await rpcCall<{ items: TemplateItem[] }>("template", "list", {});
+      setTemplates(res.items || []);
+    } catch {}
   }, []);
 
-  // WebSocket Live Updates
-  const { isConnected } = useMailSocket({
-    onMailReceived: (mail: MailEventPayload) => {
-      showToast(`📥 New email from ${mail.from.name || mail.from.address}: "${mail.subject}"`);
-      loadStats();
-      if (folder === "INBOX") {
-        setMessages((prev) => [
-          {
-            id: mail.messageId,
-            messageId: mail.messageId,
-            folder: "INBOX",
-            isRead: false,
-            isStarred: false,
-            subject: mail.subject,
-            from: mail.from,
-            to: mail.to,
-            date: typeof mail.date === "string" ? mail.date : new Date(mail.date).toISOString(),
-            hasAttachments: mail.hasAttachments,
-            sizeBytes: 0,
-            snippet: mail.snippet || "",
-          },
-          ...prev.filter((m) => m.messageId !== mail.messageId),
-        ]);
-      }
-    },
-    onStateChanged: (state: MailStateChangedPayload) => {
-      loadStats();
-      if (state.folder && state.folder !== folder) {
-        setMessages((prev) => prev.filter((m) => m.messageId !== state.messageId));
-        if (selectedMessageId === state.messageId) {
-          setSelectedMessageId(null);
-          setActiveMessage(null);
+  // Load message detail
+  const loadMessageDetail = useCallback(
+    async (item: MailItem) => {
+      setSelectedMessageId(item.id);
+      setLoadingMessage(true);
+      setLoadRemoteImages(false);
+      try {
+        const detail = await rpcCall<MessageDetail>("mail", "get", { id: item.id });
+        setActiveMessage(detail);
+
+        // Auto mark read if unread
+        if (!item.isRead) {
+          await rpcCall("mail", "update-state", { id: item.id, isRead: true });
+          setMessages((prev) => prev.map((m) => (m.id === item.id ? { ...m, isRead: true } : m)));
+          fetchStats();
         }
-      } else {
-        setMessages((prev) =>
-          prev.map((m) => {
-            if (m.messageId === state.messageId) {
-              return {
-                ...m,
-                isRead: state.isRead !== undefined ? state.isRead : m.isRead,
-                isStarred: state.isStarred !== undefined ? state.isStarred : m.isStarred,
-                folder: state.folder || m.folder,
-              };
-            }
-            return m;
-          }),
-        );
+      } catch (err: any) {
+        showToast(err.message || "Failed to load message.");
+      } finally {
+        setLoadingMessage(false);
       }
     },
+    [fetchStats],
+  );
+
+  // Real-time WebSocket connection
+  const handleMailReceived = useCallback(
+    (payload: MailEventPayload) => {
+      showToast(`New email: ${payload.subject} (from ${payload.from})`);
+      fetchMessages(folder);
+      fetchStats();
+    },
+    [folder, fetchMessages, fetchStats],
+  );
+
+  const handleMailStateChanged = useCallback((payload: MailStateChangedPayload) => {
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.messageId === payload.messageId || m.id === payload.messageId) {
+          return {
+            ...m,
+            isRead: payload.isRead !== undefined ? payload.isRead : m.isRead,
+            isStarred: payload.isStarred !== undefined ? payload.isStarred : m.isStarred,
+            folder: payload.folder !== undefined ? payload.folder : m.folder,
+          };
+        }
+        return m;
+      }),
+    );
+  }, []);
+
+  useMailSocket({
+    onMailReceived: handleMailReceived,
+    onStateChanged: handleMailStateChanged,
   });
 
-  // Initial Authentication Check
+  // Initial load
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
-      router.push("/login");
-      return;
+    async function init() {
+      setLoading(true);
+      const profile = await fetchUserProfile();
+      if (profile) {
+        await Promise.all([fetchMessages("INBOX"), fetchStats(), fetchTemplates()]);
+      }
+      setLoading(false);
     }
+    init();
+  }, [fetchUserProfile, fetchMessages, fetchStats, fetchTemplates]);
 
-    rpcCall<UserProfile>("auth", "me", {})
-      .then((data) => {
-        setUser(data);
-        loadMessages("INBOX");
-        loadStats();
-      })
-      .catch(() => {
-        localStorage.removeItem("accessToken");
-        router.push("/login");
-      })
-      .finally(() => setLoading(false));
-  }, [router, loadMessages, loadStats]);
-
-  // Global Keyboard Shortcuts (⌘K Command Palette, Escape)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // ⌘K or Ctrl+K to toggle Command Palette
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setShowCommandPalette((prev) => !prev);
-        return;
-      }
-
-      // Escape to close modals
-      if (e.key === "Escape") {
-        if (showCommandPalette) setShowCommandPalette(false);
-        if (showSecurityModal) setShowSecurityModal(false);
-        if (showRawModal) setShowRawModal(false);
-        if (showCompose) setShowCompose(false);
-      }
-
-      // Single-key shortcuts when no inputs are active
-      const target = e.target as HTMLElement;
-      const isInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
-      if (!isInput && !showCommandPalette && !showCompose && !showSecurityModal && !showRawModal) {
-        if (e.key === "c" || e.key === "C") {
-          e.preventDefault();
-          setShowCompose(true);
-        } else if (e.key === "r" || e.key === "R") {
-          e.preventDefault();
-          loadMessages(folder, searchQuery);
-          loadStats();
-          showToast("Mailbox refreshed");
-        } else if (e.key === "?") {
-          e.preventDefault();
-          setShowCommandPalette(true);
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showCommandPalette, showCompose, showSecurityModal, showRawModal, folder, searchQuery, loadMessages, loadStats, showToast]);
-
-  // Focus input when Command Palette opens
-  useEffect(() => {
-    if (showCommandPalette) {
-      setTimeout(() => commandInputRef.current?.focus(), 50);
-      setActiveCommandIndex(0);
-    }
-  }, [showCommandPalette]);
-
+  // Handle folder switch
   const handleSelectFolder = (newFolder: string) => {
     setFolder(newFolder);
     setSelectedMessageId(null);
     setActiveMessage(null);
-    setSelectedIds([]);
-    loadMessages(newFolder, searchQuery);
+    setSelectedIds(new Set());
+    setMobileSidebarOpen(false);
+    fetchMessages(newFolder);
   };
 
-  const handleSelectMessage = (messageId: string) => {
-    setSelectedMessageId(messageId);
-    loadMessageDetail(messageId);
+  // Switch account from popover
+  const handleSwitchAccount = (targetUserId: string) => {
+    const switched = switchStoreAccount(targetUserId);
+    if (switched) {
+      showToast(`Switched account to ${switched.email}`);
+      window.location.reload();
+    }
   };
 
-  // Toggle Star
-  const handleToggleStar = async (messageId: string, currentStarred: boolean, e?: React.MouseEvent) => {
-    e?.stopPropagation();
+  // Log out
+  const handleLogout = () => {
+    if (user?.userId) {
+      removeAccount(user.userId);
+    }
+    localStorage.removeItem("accessToken");
+    router.push("/login");
+  };
+
+  // Actions: Star / Unstar
+  const handleToggleStar = async (id: string, currentStarred: boolean) => {
     try {
-      await rpcCall("mail", "update-state", {
-        messageId,
-        isStarred: !currentStarred,
-      });
-      setMessages((prev) =>
-        prev.map((m) => (m.messageId === messageId ? { ...m, isStarred: !currentStarred } : m)),
-      );
-      if (activeMessage && activeMessage.messageId === messageId) {
+      await rpcCall("mail", "update-state", { id, isStarred: !currentStarred });
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isStarred: !currentStarred } : m)));
+      if (activeMessage && activeMessage.id === id) {
         setActiveMessage({ ...activeMessage, isStarred: !currentStarred });
       }
-      loadStats();
-    } catch (err) {
-      console.error("Failed to toggle star:", err);
+      fetchStats();
+    } catch (err: any) {
+      showToast(err.message || "Failed to toggle star.");
     }
   };
 
-  // Move to Trash
-  const handleMoveToTrash = async (messageId: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
+  // Actions: Mark Read / Unread
+  const handleToggleRead = async (id: string, currentRead: boolean) => {
     try {
-      await rpcCall("mail", "update-state", {
-        messageId,
-        folder: "TRASH",
-      });
-      setMessages((prev) => prev.filter((m) => m.messageId !== messageId));
-      if (selectedMessageId === messageId) {
-        setSelectedMessageId(null);
-        setActiveMessage(null);
+      await rpcCall("mail", "update-state", { id, isRead: !currentRead });
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isRead: !currentRead } : m)));
+      if (activeMessage && activeMessage.id === id) {
+        setActiveMessage({ ...activeMessage, isRead: !currentRead });
       }
-      setSelectedIds((prev) => prev.filter((id) => id !== messageId));
-      loadStats();
-      showToast("Moved to Trash");
-    } catch (err) {
-      console.error("Failed to move to trash:", err);
+      fetchStats();
+    } catch (err: any) {
+      showToast(err.message || "Failed to update read state.");
     }
   };
 
-  // Mark Unread
-  const handleMarkUnread = async (messageId: string) => {
+  // Actions: Archive
+  const handleArchive = async (id: string) => {
     try {
-      await rpcCall("mail", "update-state", {
-        messageId,
-        isRead: false,
-      });
+      await rpcCall("mail", "update-state", { id, folder: "ARCHIVE" });
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+      setActiveMessage(null);
+      setSelectedMessageId(null);
+      showToast("Message moved to Archive.");
+      fetchStats();
+    } catch (err: any) {
+      showToast(err.message || "Failed to archive message.");
+    }
+  };
+
+  // Actions: Delete / Trash
+  const handleDelete = async (id: string) => {
+    try {
+      await rpcCall("mail", "update-state", { id, folder: "TRASH" });
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+      setActiveMessage(null);
+      setSelectedMessageId(null);
+      showToast("Message moved to Trash.");
+      fetchStats();
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete message.");
+    }
+  };
+
+  // Reply handlers
+  const handleReply = () => {
+    if (!activeMessage) return;
+    setComposeTo(activeMessage.from.address);
+    setComposeSubject(activeMessage.subject.startsWith("Re:") ? activeMessage.subject : `Re: ${activeMessage.subject}`);
+    setComposeBody(`\n\n--- On ${new Date(activeMessage.date).toLocaleString()}, ${activeMessage.from.name || activeMessage.from.address} wrote:\n> ${activeMessage.body.text || activeMessage.body.snippet}`);
+    setShowCompose(true);
+  };
+
+  const handleReplyAll = () => {
+    if (!activeMessage) return;
+    setComposeTo(activeMessage.from.address);
+    const otherRecipients = [
+      ...activeMessage.to.filter((t) => t.address !== user?.email && t.address !== activeMessage.from.address),
+      ...(activeMessage.cc || []),
+    ].map((r) => r.address);
+
+    if (otherRecipients.length > 0) {
+      setComposeCc(otherRecipients.join(", "));
+      setShowCcBcc(true);
+    }
+    setComposeSubject(activeMessage.subject.startsWith("Re:") ? activeMessage.subject : `Re: ${activeMessage.subject}`);
+    setComposeBody(`\n\n--- On ${new Date(activeMessage.date).toLocaleString()}, ${activeMessage.from.name || activeMessage.from.address} wrote:\n> ${activeMessage.body.text || activeMessage.body.snippet}`);
+    setShowCompose(true);
+  };
+
+  const handleForward = () => {
+    if (!activeMessage) return;
+    setComposeTo("");
+    setComposeSubject(activeMessage.subject.startsWith("Fwd:") ? activeMessage.subject : `Fwd: ${activeMessage.subject}`);
+    setComposeBody(`\n\n---------- Forwarded message ---------\nFrom: ${activeMessage.from.name || ""} <${activeMessage.from.address}>\nDate: ${new Date(activeMessage.date).toLocaleString()}\nSubject: ${activeMessage.subject}\nTo: ${activeMessage.to.map((t) => t.address).join(", ")}\n\n${activeMessage.body.text || activeMessage.body.snippet}`);
+    setShowCompose(true);
+  };
+
+  // Toggle Color Tag on active email
+  const handleToggleTag = async (id: string, tagId: string) => {
+    if (!activeMessage) return;
+    const currentLabels = activeMessage.labels || [];
+    const nextLabels = currentLabels.includes(tagId)
+      ? currentLabels.filter((l) => l !== tagId)
+      : [...currentLabels, tagId];
+
+    try {
+      await rpcCall("mail", "update-state", { id, labels: nextLabels });
+      setActiveMessage({ ...activeMessage, labels: nextLabels });
       setMessages((prev) =>
-        prev.map((m) => (m.messageId === messageId ? { ...m, isRead: false } : m)),
+        prev.map((m) => (m.id === id ? { ...m, labels: nextLabels } : m)),
       );
-      if (selectedMessageId === messageId) {
-        setSelectedMessageId(null);
-        setActiveMessage(null);
+      showToast("Tag updated.");
+    } catch (err: any) {
+      showToast(err.message || "Failed to update tag.");
+    }
+  };
+
+  // Attachment upload validation with Organization Limits
+  const handleFileAttachment = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const maxFileSize = user?.maxSingleFileSizeBytes ?? 26214400; // default 25MB
+    const maxCount = user?.maxAttachmentCount ?? 10;
+
+    // Check count limit
+    if (maxCount !== -1 && composeAttachments.length + files.length > maxCount) {
+      showToast(`Attachment limit reached: Maximum ${maxCount} files allowed per email.`);
+      return;
+    }
+
+    // Check individual file size limit
+    for (const f of files) {
+      if (maxFileSize !== -1 && f.size > maxFileSize) {
+        showToast(`File "${f.name}" (${formatBytes(f.size)}) exceeds your organization's max single file limit of ${formatBytes(maxFileSize)}.`);
+        return;
       }
-      loadStats();
-      showToast("Marked as Unread");
-    } catch (err) {
-      console.error("Failed to mark unread:", err);
     }
+
+    const newEntries = files.map((f) => ({ name: f.name, size: f.size, file: f }));
+    setComposeAttachments((prev) => [...prev, ...newEntries]);
+    e.target.value = "";
   };
 
-  // ── Multi-select Batch Handlers ──
-  const toggleSelectOne = (messageId: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    setSelectedIds((prev) =>
-      prev.includes(messageId) ? prev.filter((id) => id !== messageId) : [...prev, messageId],
-    );
-  };
-
-  const handleSelectAll = () => {
-    if (selectedIds.length === filteredMessages.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(filteredMessages.map((m) => m.messageId));
-    }
-  };
-
-  const handleBatchMarkRead = async (isRead: boolean) => {
-    if (selectedIds.length === 0) return;
-    setBatchActionLoading(true);
-    try {
-      await Promise.all(
-        selectedIds.map((id) =>
-          rpcCall("mail", "update-state", { messageId: id, isRead }).catch(() => {}),
-        ),
-      );
-      setMessages((prev) =>
-        prev.map((m) => (selectedIds.includes(m.messageId) ? { ...m, isRead } : m)),
-      );
-      loadStats();
-      showToast(isRead ? `Marked ${selectedIds.length} as read` : `Marked ${selectedIds.length} as unread`);
-      setSelectedIds([]);
-    } catch (err) {
-      console.error("Batch mark read failed:", err);
-    } finally {
-      setBatchActionLoading(false);
-    }
-  };
-
-  const handleBatchStar = async (isStarred: boolean) => {
-    if (selectedIds.length === 0) return;
-    setBatchActionLoading(true);
-    try {
-      await Promise.all(
-        selectedIds.map((id) =>
-          rpcCall("mail", "update-state", { messageId: id, isStarred }).catch(() => {}),
-        ),
-      );
-      setMessages((prev) =>
-        prev.map((m) => (selectedIds.includes(m.messageId) ? { ...m, isStarred } : m)),
-      );
-      loadStats();
-      showToast(isStarred ? `Starred ${selectedIds.length} conversations` : `Unstarred ${selectedIds.length} conversations`);
-      setSelectedIds([]);
-    } catch (err) {
-      console.error("Batch star failed:", err);
-    } finally {
-      setBatchActionLoading(false);
-    }
-  };
-
-  const handleBatchTrash = async () => {
-    if (selectedIds.length === 0) return;
-    setBatchActionLoading(true);
-    try {
-      await Promise.all(
-        selectedIds.map((id) =>
-          rpcCall("mail", "update-state", { messageId: id, folder: "TRASH" }).catch(() => {}),
-        ),
-      );
-      setMessages((prev) => prev.filter((m) => !selectedIds.includes(m.messageId)));
-      if (selectedMessageId && selectedIds.includes(selectedMessageId)) {
-        setSelectedMessageId(null);
-        setActiveMessage(null);
-      }
-      loadStats();
-      showToast(`Moved ${selectedIds.length} conversations to Trash`);
-      setSelectedIds([]);
-    } catch (err) {
-      console.error("Batch trash failed:", err);
-    } finally {
-      setBatchActionLoading(false);
-    }
-  };
-
-  // Contacts Autocomplete
-  const handleComposeToChange = async (val: string) => {
-    setComposeTo(val);
-    const lastToken = val.split(",").pop()?.trim() || "";
-    if (lastToken.length > 0) {
-      try {
-        const res = await rpcCall<{ items: Array<{ id: string; name: string; email: string; company?: string }> }>(
-          "contacts",
-          "search",
-          { query: lastToken, limit: 5 },
-        );
-        setContactSuggestions(res.items || []);
-        setShowSuggestions((res.items?.length || 0) > 0);
-      } catch {
-        setShowSuggestions(false);
-      }
-    } else {
-      setShowSuggestions(false);
-    }
-  };
-
-  const handleSelectSuggestion = (c: { name: string; email: string }) => {
-    const parts = composeTo.split(",").map((s) => s.trim()).filter(Boolean);
-    parts.pop();
-    parts.push(c.email);
-    setComposeTo(parts.join(", ") + ", ");
-    setShowSuggestions(false);
-  };
-
-  // Formatting toolbar inserts
-  const insertFormatting = (prefix: string, suffix: string = "") => {
-    const textarea = composeTextareaRef.current;
-    if (!textarea) return;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selectedText = composeBody.substring(start, end);
-    const replacement = `${prefix}${selectedText || "text"}${suffix}`;
-    const newBody = composeBody.substring(0, start) + replacement + composeBody.substring(end);
-    setComposeBody(newBody);
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(start + prefix.length, start + prefix.length + (selectedText.length || 4));
-    }, 10);
-  };
-
-  // File Attachments
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const newFiles = Array.from(e.target.files);
-      setComposeAttachments((prev) => [...prev, ...newFiles]);
-    }
-  };
-
-  const removeAttachment = (index: number) => {
+  const handleRemoveAttachment = (index: number) => {
     setComposeAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Send Email Handler
+  // Insert template into composer
+  const handleInsertTemplate = (tmpl: TemplateItem) => {
+    setComposeSubject(tmpl.subject);
+    setComposeBody(tmpl.bodyText || tmpl.bodyHtml || "");
+    setShowTemplatePicker(false);
+    showToast(`Template "${tmpl.name}" applied.`);
+  };
+
+  // Send Email
   const handleSendEmail = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!composeTo.trim()) return;
+    if (!composeTo.trim()) {
+      showToast("Please provide at least one recipient.");
+      return;
+    }
 
-    setSendingMail(true);
+    setIsSending(true);
     try {
-      const toRecipients = composeTo.split(",").map((s) => s.trim()).filter(Boolean);
-      const ccRecipients = composeCc.split(",").map((s) => s.trim()).filter(Boolean);
-      const bccRecipients = composeBcc.split(",").map((s) => s.trim()).filter(Boolean);
+      const toAddresses = composeTo.split(",").map((s) => s.trim()).filter(Boolean);
+      const ccAddresses = composeCc ? composeCc.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      const bccAddresses = composeBcc ? composeBcc.split(",").map((s) => s.trim()).filter(Boolean) : [];
 
-      const res = await rpcCall<{ messageId: string; deliveredInternally: number; queuedOutbound: number }>(
-        "mail",
-        "send",
-        {
-          to: toRecipients,
-          cc: ccRecipients.length > 0 ? ccRecipients : undefined,
-          bcc: bccRecipients.length > 0 ? bccRecipients : undefined,
-          subject: (composePriority === "high" ? "[URGENT] " : "") + composeSubject,
-          text: composeBody,
-          html: `<p>${composeBody.replace(/\n/g, "<br/>")}</p>`,
-        },
-      );
+      await rpcCall("mail", "send", {
+        to: toAddresses,
+        cc: ccAddresses.length > 0 ? ccAddresses : undefined,
+        bcc: bccAddresses.length > 0 ? bccAddresses : undefined,
+        subject: composeSubject.trim() || "(No Subject)",
+        text: composeBody,
+        html: composeBody.includes("<") ? composeBody : undefined,
+      });
 
+      showToast("Email dispatched successfully!");
       setShowCompose(false);
       setComposeTo("");
       setComposeCc("");
       setComposeBcc("");
-      setShowCc(false);
-      setShowBcc(false);
       setComposeSubject("");
       setComposeBody("");
-      setComposePriority("normal");
       setComposeAttachments([]);
-      loadStats();
-
-      showToast(`Sent! (${res.deliveredInternally} internal, ${res.queuedOutbound} queued outbound)`);
-
-      if (folder === "SENT") {
-        loadMessages("SENT");
-      }
+      fetchMessages(folder);
+      fetchStats();
     } catch (err: any) {
-      alert("Failed to send: " + (err?.message || "Unknown error"));
+      showToast(err.message || "Failed to dispatch email.");
     } finally {
-      setSendingMail(false);
+      setIsSending(false);
     }
   };
 
+  // Filtered messages
   const filteredMessages = useMemo(() => {
     return messages.filter((m) => {
       if (filterUnreadOnly && m.isRead) return false;
-      return true;
+      if (activeTagFilter && (!m.labels || !m.labels.includes(activeTagFilter))) return false;
+      if (!searchQuery) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        m.subject.toLowerCase().includes(q) ||
+        m.from.address.toLowerCase().includes(q) ||
+        (m.from.name && m.from.name.toLowerCase().includes(q)) ||
+        m.snippet.toLowerCase().includes(q)
+      );
     });
-  }, [messages, filterUnreadOnly]);
+  }, [messages, filterUnreadOnly, activeTagFilter, searchQuery]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
-    router.push("/login");
-  };
+  // Check if sender is external
+  const isExternalSender = useMemo(() => {
+    if (!activeMessage || !user) return false;
+    const senderDomain = activeMessage.from.address.split("@")[1]?.toLowerCase();
+    const userDomain = user.email.split("@")[1]?.toLowerCase();
+    return senderDomain && userDomain && senderDomain !== userDomain;
+  }, [activeMessage, user]);
 
-  // Generate synthetic RFC 822 EML source for active message
+  // Generate Raw RFC 822 EML
   const rawEmlContent = useMemo(() => {
     if (!activeMessage) return "";
     const fromStr = activeMessage.from.name
@@ -641,1314 +673,1018 @@ export default function InboxPage() {
     const toStr = activeMessage.to
       .map((t) => (t.name ? `"${t.name}" <${t.address}>` : `<${t.address}>`))
       .join(", ");
-    const ccStr =
-      activeMessage.cc && activeMessage.cc.length > 0
-        ? `\r\nCc: ${activeMessage.cc.map((t) => (t.name ? `"${t.name}" <${t.address}>` : `<${t.address}>`)).join(", ")}`
-        : "";
-    const domain = activeMessage.from.address.split("@")[1] || "cellsweb.com";
-
     return [
-      `Received: from mail.${domain} (mail.${domain} [127.0.0.1])`,
-      `\tby cells-mta (CellsInbox Sovereign MTA) with ESMTPS;`,
-      `\t${new Date(activeMessage.date).toUTCString()}`,
-      `Authentication-Results: mail.cellsweb.com;`,
-      `\tdkim=${activeMessage.dkimResult || "pass"} header.i=@${domain} header.s=ci;`,
-      `\tspf=${activeMessage.spfResult || "pass"} smtp.mailfrom=${activeMessage.from.address};`,
-      `\tdmarc=${activeMessage.dmarcResult || "pass"} action=none header.from=${domain};`,
-      `Received-SPF: ${activeMessage.spfResult || "pass"} (mail.cellsweb.com: domain of ${activeMessage.from.address} designates 127.0.0.1 as permitted sender)`,
-      `DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=${domain}; s=ci;`,
-      `\th=from:to:subject:date:message-id:content-type:mime-version;`,
-      `\tbh=YnVsd2Fya2VtYWlsY2VsbHNpbmJveHNvdmVyZWlnbg==;`,
-      `Message-ID: ${activeMessage.messageId}`,
-      `Date: ${new Date(activeMessage.date).toUTCString()}`,
       `From: ${fromStr}`,
-      `To: ${toStr}${ccStr}`,
+      `To: ${toStr}`,
       `Subject: ${activeMessage.subject}`,
-      `MIME-Version: 1.0`,
+      `Date: ${new Date(activeMessage.date).toUTCString()}`,
+      `Message-ID: ${activeMessage.messageId}`,
+      `Authentication-Results: spf=${activeMessage.spfResult || "pass"} dkim=${activeMessage.dkimResult || "pass"} dmarc=${activeMessage.dmarcResult || "pass"}`,
       `Content-Type: ${activeMessage.body.html ? 'text/html; charset="UTF-8"' : 'text/plain; charset="UTF-8"'}`,
-      `X-Mailer: CellsInbox Sovereign WebMail Engine v2.0`,
-      ``,
+      "",
       activeMessage.body.html || activeMessage.body.text || "(Empty body)",
     ].join("\r\n");
   }, [activeMessage]);
 
-  const handleCopyRawEml = () => {
-    navigator.clipboard.writeText(rawEmlContent);
-    setCopiedRaw(true);
-    setTimeout(() => setCopiedRaw(false), 2000);
-  };
-
-  // Commands for Command Palette (⌘K)
-  const allCommands = useMemo(() => {
-    return [
-      {
-        id: "inbox",
-        title: "Go to Inbox",
-        group: "Navigation",
-        shortcut: "G I",
-        icon: Inbox,
-        run: () => handleSelectFolder("INBOX"),
-      },
-      {
-        id: "starred",
-        title: "Go to Starred",
-        group: "Navigation",
-        shortcut: "G S",
-        icon: Star,
-        run: () => handleSelectFolder("STARRED"),
-      },
-      {
-        id: "sent",
-        title: "Go to Sent",
-        group: "Navigation",
-        shortcut: "G E",
-        icon: Send,
-        run: () => handleSelectFolder("SENT"),
-      },
-      {
-        id: "drafts",
-        title: "Go to Drafts",
-        group: "Navigation",
-        shortcut: "G D",
-        icon: FileText,
-        run: () => handleSelectFolder("DRAFTS"),
-      },
-      {
-        id: "trash",
-        title: "Go to Trash",
-        group: "Navigation",
-        shortcut: "G T",
-        icon: Trash2,
-        run: () => handleSelectFolder("TRASH"),
-      },
-      {
-        id: "compose",
-        title: "Compose New Message",
-        group: "Actions",
-        shortcut: "C",
-        icon: Edit3,
-        run: () => setShowCompose(true),
-      },
-      {
-        id: "refresh",
-        title: "Refresh Mailbox",
-        group: "Actions",
-        shortcut: "R",
-        icon: RefreshCw,
-        run: () => {
-          loadMessages(folder, searchQuery);
-          loadStats();
-          showToast("Mailbox refreshed");
-        },
-      },
-      {
-        id: "filter_unread",
-        title: "Toggle Unread Filter",
-        group: "Actions",
-        shortcut: "U",
-        icon: Eye,
-        run: () => setFilterUnreadOnly((prev) => !prev),
-      },
-      {
-        id: "select_all",
-        title: selectedIds.length > 0 ? "Deselect All Conversations" : "Select All Conversations",
-        group: "Actions",
-        shortcut: "⌘A",
-        icon: CheckSquare,
-        run: handleSelectAll,
-      },
-      {
-        id: "settings",
-        title: "Account & Security Settings",
-        group: "Settings",
-        shortcut: "G ,",
-        icon: Sliders,
-        run: () => router.push("/settings"),
-      },
-      ...(user?.role === "ORG_ADMIN" || user?.role === "PLATFORM_ADMIN"
-        ? [
-            {
-              id: "admin",
-              title: "Sovereign Admin Panel",
-              group: "Settings",
-              shortcut: "G A",
-              icon: Settings,
-              run: () => router.push("/admin"),
-            },
-          ]
-        : []),
-      {
-        id: "contacts",
-        title: "Address Book & Contacts",
-        group: "Apps",
-        shortcut: "G C",
-        icon: Users,
-        run: () => router.push("/contacts"),
-      },
-      {
-        id: "calendar",
-        title: "Calendar & Events",
-        group: "Apps",
-        shortcut: "G L",
-        icon: Calendar,
-        run: () => router.push("/calendar"),
-      },
-      {
-        id: "logout",
-        title: "Sign Out",
-        group: "Account",
-        shortcut: "",
-        icon: LogOut,
-        run: handleLogout,
-      },
-    ];
-  }, [user, folder, searchQuery, selectedIds, handleSelectAll, handleLogout, loadMessages, loadStats, router, showToast]);
-
-  const filteredCommands = useMemo(() => {
-    if (!commandQuery.trim()) return allCommands;
-    const q = commandQuery.toLowerCase();
-    return allCommands.filter(
-      (c) =>
-        c.title.toLowerCase().includes(q) ||
-        c.group.toLowerCase().includes(q) ||
-        c.shortcut.toLowerCase().includes(q),
-    );
-  }, [allCommands, commandQuery]);
-
-  const handleCommandKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveCommandIndex((prev) => (prev + 1) % filteredCommands.length);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveCommandIndex((prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      const cmd = filteredCommands[activeCommandIndex];
-      if (cmd) {
-        setShowCommandPalette(false);
-        cmd.run();
-      }
-    }
-  };
-
-  // Sender security calculation
-  const isSenderExternal = useMemo(() => {
-    if (!activeMessage || !user) return false;
-    const userDomain = user.email.split("@")[1]?.toLowerCase();
-    const senderDomain = activeMessage.from.address.split("@")[1]?.toLowerCase();
-    return userDomain && senderDomain && userDomain !== senderDomain;
-  }, [activeMessage, user]);
-
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground text-sm font-medium animate-pulse">
-        Authenticating Secure Sovereign Session...
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+        <div className="size-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        <span className="text-xs text-muted-foreground font-mono">Loading sovereign mailbox...</span>
       </div>
     );
   }
 
+  // Quota percentages
+  const quotaBytes = user?.storageQuotaBytes ?? 10737418240;
+  const usedBytes = user?.storageUsedBytes ?? 0;
+  const quotaPercent = quotaBytes === -1 ? 0 : Math.min(100, Math.round((usedBytes / quotaBytes) * 100));
+
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
-      {/* ── TOP HEADER ── */}
-      <header className="h-14 border-b border-border bg-card/60 backdrop-blur-md px-4 flex items-center justify-between gap-4 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="p-1 rounded bg-primary text-primary-foreground font-bold">
-              <Mail className="size-4" />
-            </div>
-            <span className="font-bold text-base tracking-tight">CellsInbox</span>
-          </div>
-
-          <Badge variant="outline" className="hidden sm:inline-flex text-[11px] font-medium border-border/80">
-            Sovereign Mail
-          </Badge>
-
-          {/* WebSocket Live Sync Badge */}
-          <div className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-border/60 bg-muted/40">
-            <span
-              className={`size-2 rounded-full ${
-                isConnected ? "bg-emerald-500 shadow-[0_0_8px_#10b981]" : "bg-muted-foreground"
-              }`}
-            />
-            <span className={isConnected ? "text-emerald-500 font-medium" : "text-muted-foreground"}>
-              {isConnected ? "Live Sync" : "Connecting..."}
-            </span>
-          </div>
+    <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden font-sans">
+      {/* Toast Feedback */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-2xl animate-in fade-in duration-200">
+          {toast}
         </div>
+      )}
 
-        {/* Global Search Bar + Command Palette Trigger */}
-        <div className="flex-1 max-w-md relative flex items-center">
-          <Search className="size-4 absolute left-3 text-muted-foreground pointer-events-none" />
-          <Input
-            type="search"
-            placeholder="Search emails by subject or sender..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              loadMessages(folder, e.target.value);
-            }}
-            className="pl-9 pr-14 h-9 text-xs bg-muted/30 focus-visible:bg-background"
-          />
-          <button
-            type="button"
-            onClick={() => setShowCommandPalette(true)}
-            className="absolute right-2 px-1.5 py-0.5 rounded border border-border/80 bg-muted/60 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-            title="Open Command Palette (⌘K)"
-          >
-            <Command className="size-3" />K
-          </button>
-        </div>
-
-        {/* User Badges & Action Toolbar */}
+      {/* ── MOBILE HEADER (Visible only on < 768px) ── */}
+      <header className="h-14 border-b border-border bg-card/70 backdrop-blur-md px-3 flex items-center justify-between shrink-0 md:hidden">
         <div className="flex items-center gap-2">
-          {(user?.role === "ORG_ADMIN" || user?.role === "PLATFORM_ADMIN") && (
-            <Link href="/admin">
-              <Button variant="outline" size="sm" className="gap-1.5 h-8 text-xs font-semibold border-primary/40 text-primary hover:bg-primary/10">
-                <Settings className="size-3.5" />
-                Admin Panel
-              </Button>
-            </Link>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+            className="size-9"
+          >
+            <Menu className="size-5" />
+          </Button>
+          <span className="font-bold text-sm capitalize">{folder.toLowerCase()}</span>
+          {stats.inboxUnread > 0 && folder === "INBOX" && (
+            <Badge variant="default" className="text-[10px] px-1.5 py-0 h-4">
+              {stats.inboxUnread}
+            </Badge>
           )}
+        </div>
 
-          <Link href="/contacts">
-            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs">
-              <Users className="size-3.5" />
-              <span className="hidden sm:inline">Contacts</span>
-            </Button>
-          </Link>
-
-          <Link href="/calendar">
-            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs">
-              <Calendar className="size-3.5" />
-              <span className="hidden sm:inline">Calendar</span>
-            </Button>
-          </Link>
-
-          <Link href="/settings">
-            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs">
-              <Sliders className="size-3.5" />
-              <span className="hidden sm:inline">Settings</span>
-            </Button>
-          </Link>
-
-          <div className="hidden md:flex flex-col items-end text-right pl-1">
-            <span className="text-xs font-semibold leading-none">{user?.email}</span>
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{user?.role}</span>
-          </div>
-
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="h-8 text-xs gap-1">
-            <LogOut className="size-3.5" />
-            <span className="hidden sm:inline">Sign Out</span>
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => fetchMessages(folder)}
+            className="size-9"
+          >
+            <RefreshCw className="size-4" />
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => setShowCompose(true)}
+            className="h-8 gap-1 px-3 text-xs font-semibold"
+          >
+            <Edit3 className="size-3.5" />
+            Compose
           </Button>
         </div>
       </header>
 
-      {/* ── 3-COLUMN WORKSPACE ── */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* ── PANE 1: SIDEBAR ── */}
-        <aside className="w-56 border-r border-border bg-card/20 flex flex-col p-3 shrink-0 justify-between">
-          <div>
+      {/* ── WORKSPACE ── */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Mobile Sidebar Overlay Backdrop */}
+        {mobileSidebarOpen && (
+          <div
+            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs md:hidden"
+            onClick={() => setMobileSidebarOpen(false)}
+          />
+        )}
+
+        {/* ── SIDEBAR PANE (Desktop permanent, Mobile drawer) ── */}
+        <aside
+          className={`
+            fixed md:relative inset-y-0 left-0 z-50 md:z-0
+            w-64 border-r border-border bg-card/40 backdrop-blur-md md:bg-card/20
+            flex flex-col justify-between p-3 shrink-0 transition-transform duration-200
+            ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+          `}
+        >
+          {/* Top of Sidebar: Brand & Compose */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-2">
+                <div className="size-7 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm shadow-sm">
+                  C
+                </div>
+                <div>
+                  <div className="font-bold text-sm leading-tight">{user?.orgName || "CellsInbox"}</div>
+                  <div className="text-[10px] text-muted-foreground font-mono">Sovereign Mail</div>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 md:hidden"
+                onClick={() => setMobileSidebarOpen(false)}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+
             <Button
-              onClick={() => setShowCompose(true)}
-              className="w-full justify-start gap-2 mb-4 shadow-sm font-semibold"
-              size="default"
+              onClick={() => {
+                setShowCompose(true);
+                setMobileSidebarOpen(false);
+              }}
+              className="w-full justify-start gap-2 shadow-sm font-semibold h-9 text-xs"
             >
               <Edit3 className="size-4" />
-              New Message
+              Compose Email
             </Button>
 
-            <nav className="space-y-1">
+            {/* Folders List */}
+            <nav className="space-y-0.5 pt-2">
               {[
-                { id: "INBOX", label: "Inbox", icon: Inbox, badge: stats.inboxUnread },
+                { id: "INBOX", label: "Inbox", icon: Inbox, count: stats.inboxUnread },
                 { id: "STARRED", label: "Starred", icon: Star, count: stats.starred },
                 { id: "SENT", label: "Sent", icon: Send, count: stats.sent },
                 { id: "DRAFTS", label: "Drafts", icon: FileText, count: stats.drafts },
                 { id: "TRASH", label: "Trash", icon: Trash2, count: stats.trash },
-              ].map((item) => {
-                const isActive = folder === item.id;
-                const IconComponent = item.icon;
+              ].map((f) => {
+                const Icon = f.icon;
+                const active = folder === f.id;
                 return (
-                  <Button
-                    key={item.id}
-                    variant={isActive ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() => handleSelectFolder(item.id)}
-                    className="w-full justify-between font-normal text-xs h-9 px-2.5"
+                  <button
+                    key={f.id}
+                    onClick={() => handleSelectFolder(f.id)}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                    }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <IconComponent className={`size-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
-                      <span className={isActive ? "font-semibold text-foreground" : "text-muted-foreground"}>
-                        {item.label}
-                      </span>
+                    <div className="flex items-center gap-2.5">
+                      <Icon className="size-4" />
+                      <span>{f.label}</span>
                     </div>
-                    {item.badge !== undefined && item.badge > 0 ? (
-                      <Badge variant="default" className="h-5 px-1.5 text-[10px] font-bold">
-                        {item.badge}
-                      </Badge>
-                    ) : item.count !== undefined && item.count > 0 ? (
-                      <span className="text-[11px] text-muted-foreground">{item.count}</span>
-                    ) : null}
-                  </Button>
+                    {f.count !== undefined && f.count > 0 && (
+                      <span
+                        className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full ${
+                          active ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {f.count}
+                      </span>
+                    )}
+                  </button>
                 );
               })}
             </nav>
-          </div>
 
-          <Card className="border border-border/60 bg-muted/20 p-3 space-y-1.5">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-              <HardDrive className="size-3.5 text-primary" />
-              Tenant Storage
-            </div>
-            <p className="text-[11px] text-muted-foreground">BYOS Isolated S3/R2</p>
-            <div className="flex items-center gap-1 text-[10px] text-emerald-500 font-medium">
-              <span className="size-1.5 rounded-full bg-emerald-500" />
-              Encrypted at Rest
-            </div>
-          </Card>
-        </aside>
-
-        {/* ── PANE 2: MESSAGE LIST ── */}
-        <section className="w-80 md:w-96 border-r border-border bg-card/40 flex flex-col shrink-0">
-          {/* List Toolbar / Batch Selection Header */}
-          <div className="p-2.5 px-3 border-b border-border flex items-center justify-between bg-card/60">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleSelectAll}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                title={selectedIds.length === filteredMessages.length ? "Deselect All" : "Select All"}
-              >
-                {selectedIds.length > 0 && selectedIds.length === filteredMessages.length ? (
-                  <CheckSquare className="size-4 text-primary" />
-                ) : selectedIds.length > 0 ? (
-                  <MinusSquare className="size-4 text-primary" />
-                ) : (
-                  <Square className="size-4" />
+            {/* Color Tags & Labels Section */}
+            <div className="pt-3 border-t border-border/30 space-y-1">
+              <div className="flex items-center justify-between px-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <Tag className="size-3 text-primary" /> Color Tags
+                </span>
+                {activeTagFilter && (
+                  <button
+                    onClick={() => setActiveTagFilter(null)}
+                    className="text-primary hover:underline text-[9px] lowercase font-normal"
+                  >
+                    clear
+                  </button>
                 )}
-              </button>
-
-              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{folder}</span>
-              <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
-                {filteredMessages.length}
-              </Badge>
-            </div>
-
-            <div className="flex items-center gap-1">
-              <Button
-                variant={filterUnreadOnly ? "default" : "outline"}
-                size="xs"
-                onClick={() => setFilterUnreadOnly(!filterUnreadOnly)}
-                className="text-[11px] h-6 px-2"
-              >
-                Unread
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => {
-                  loadMessages(folder, searchQuery);
-                  loadStats();
-                }}
-                title="Refresh"
-              >
-                <RefreshCw className="size-3.5 text-muted-foreground" />
-              </Button>
-            </div>
-          </div>
-
-          {/* Sticky Batch Action Bar when items are selected */}
-          {selectedIds.length > 0 && (
-            <div className="p-2 px-3 bg-primary/10 border-b border-primary/30 flex items-center justify-between text-xs animate-in slide-in-from-top-1">
-              <span className="font-semibold text-primary">{selectedIds.length} selected</span>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => handleBatchMarkRead(true)}
-                  disabled={batchActionLoading}
-                  className="h-6 px-1.5 text-[11px]"
-                  title="Mark Read"
-                >
-                  Read
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => handleBatchMarkRead(false)}
-                  disabled={batchActionLoading}
-                  className="h-6 px-1.5 text-[11px]"
-                  title="Mark Unread"
-                >
-                  Unread
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => handleBatchStar(true)}
-                  disabled={batchActionLoading}
-                  className="h-6 px-1.5 text-[11px]"
-                  title="Star"
-                >
-                  <Star className="size-3 text-amber-400 fill-amber-400" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={handleBatchTrash}
-                  disabled={batchActionLoading}
-                  className="h-6 px-1.5 text-[11px] text-destructive hover:bg-destructive/10"
-                  title="Move to Trash"
-                >
-                  <Trash2 className="size-3" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => setSelectedIds([])}
-                  className="h-6 px-1 text-[11px] text-muted-foreground"
-                  title="Clear Selection"
-                >
-                  <X className="size-3" />
-                </Button>
               </div>
-            </div>
-          )}
-
-          {/* List Items ScrollArea */}
-          <ScrollArea className="flex-1">
-            {filteredMessages.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground space-y-2">
-                <Inbox className="size-8 mx-auto text-muted-foreground/60" />
-                <p className="text-xs">No messages in this folder</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border/60">
-                {filteredMessages.map((msg) => {
-                  const isSelected = selectedMessageId === msg.messageId;
-                  const isChecked = selectedIds.includes(msg.messageId);
-                  const initials = (msg.from?.name || msg.from?.address || "U")
-                    .slice(0, 2)
-                    .toUpperCase();
-
+              <div className="space-y-0.5">
+                {COLOR_TAGS.map((tag) => {
+                  const isSelected = activeTagFilter === tag.id;
+                  const count = messages.filter((m) => m.labels?.includes(tag.id)).length;
                   return (
-                    <div
-                      key={msg.id}
-                      onClick={() => handleSelectMessage(msg.messageId)}
-                      className={`p-3 cursor-pointer flex gap-2.5 items-start transition-colors group ${
+                    <button
+                      key={tag.id}
+                      onClick={() => setActiveTagFilter(isSelected ? null : tag.id)}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
                         isSelected
-                          ? "bg-accent text-accent-foreground"
-                          : !msg.isRead
-                          ? "bg-primary/5 hover:bg-muted/50"
-                          : "hover:bg-muted/40"
+                          ? "bg-accent font-semibold text-foreground shadow-xs"
+                          : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
                       }`}
                     >
-                      {/* Checkbox for batch select */}
-                      <div
-                        onClick={(e) => toggleSelectOne(msg.messageId, e)}
-                        className="pt-1 shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
-                      >
-                        {isChecked ? (
-                          <CheckSquare className="size-4 text-primary" />
-                        ) : (
-                          <Square className="size-4 opacity-40 group-hover:opacity-100 transition-opacity" />
-                        )}
+                      <div className="flex items-center gap-2">
+                        <span className={`size-2 rounded-full ${tag.dot} shrink-0`} />
+                        <span>{tag.name}</span>
                       </div>
-
-                      {/* Unread indicator dot */}
-                      <div className="pt-2 shrink-0">
-                        <span
-                          className={`block size-2 rounded-full ${
-                            !msg.isRead ? "bg-primary" : "bg-transparent"
-                          }`}
-                        />
-                      </div>
-
-                      {/* Avatar */}
-                      <Avatar className="size-8 text-xs font-semibold shrink-0 border border-border">
-                        <AvatarFallback className="bg-primary/10 text-primary">
-                          {initials}
-                        </AvatarFallback>
-                      </Avatar>
-
-                      {/* Content Preview */}
-                      <div className="flex-1 min-w-0 space-y-0.5">
-                        <div className="flex justify-between items-baseline gap-1">
-                          <span
-                            className={`text-xs truncate ${
-                              !msg.isRead ? "font-bold text-foreground" : "font-medium text-foreground/80"
-                            }`}
-                          >
-                            {msg.from?.name || msg.from?.address}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground shrink-0">
-                            {new Date(msg.date).toLocaleDateString([], {
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </span>
-                        </div>
-
-                        <div
-                          className={`text-xs truncate ${
-                            !msg.isRead ? "font-semibold text-foreground" : "text-muted-foreground"
-                          }`}
-                        >
-                          {msg.subject}
-                        </div>
-
-                        <div className="text-[11px] text-muted-foreground truncate">
-                          {msg.snippet || "(No preview text)"}
-                        </div>
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex flex-col gap-1 items-end shrink-0 pt-0.5">
-                        <button
-                          type="button"
-                          onClick={(e) => handleToggleStar(msg.messageId, msg.isStarred, e)}
-                          title={msg.isStarred ? "Starred" : "Not starred"}
-                          className="text-muted-foreground hover:text-amber-400 transition-colors"
-                        >
-                          <Star
-                            className={`size-3.5 ${
-                              msg.isStarred ? "text-amber-400 fill-amber-400" : "text-muted-foreground/40"
-                            }`}
-                          />
-                        </button>
-                        {msg.hasAttachments && (
-                          <Paperclip className="size-3 text-muted-foreground/60" />
-                        )}
-                      </div>
-                    </div>
+                      {count > 0 && (
+                        <span className="text-[10px] font-mono text-muted-foreground">{count}</span>
+                      )}
+                    </button>
                   );
                 })}
               </div>
-            )}
-          </ScrollArea>
-        </section>
-
-        {/* ── PANE 3: READER PANE ── */}
-        <main className="flex-1 bg-background flex flex-col overflow-hidden">
-          {loadingMessage ? (
-            <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground animate-pulse">
-              Loading sovereign email message...
             </div>
-          ) : !activeMessage ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground space-y-3 p-8 text-center">
-              <Mail className="size-12 text-muted-foreground/40" />
-              <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-foreground">Select an email to read</h3>
-                <p className="text-xs text-muted-foreground max-w-sm">
-                  Choose a conversation from the mailbox list to inspect its contents, cryptographic headers, and attachments.
-                </p>
+          </div>
+
+          {/* Bottom of Sidebar: User Profile & Popover Menu */}
+          <div className="space-y-3 pt-4 border-t border-border/40">
+            {/* Storage Quota Progress */}
+            <div className="px-1 text-xs space-y-1.5">
+              <div className="flex justify-between items-center text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1 font-medium">
+                  <HardDrive className="size-3" /> Storage
+                </span>
+                <span className="font-mono">
+                  {formatBytes(usedBytes)} / {formatBytes(quotaBytes)}
+                </span>
+              </div>
+              <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-300 rounded-full"
+                  style={{ width: `${quotaPercent}%` }}
+                />
               </div>
             </div>
-          ) : (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Message Header & Action Toolbar */}
-              <div className="p-4 border-b border-border bg-card/30 space-y-3">
-                <div className="flex justify-between items-start gap-4">
-                  <div className="space-y-1.5 flex-1 min-w-0">
-                    <h2 className="text-lg font-bold tracking-tight text-foreground break-words">
-                      {activeMessage.subject}
-                    </h2>
 
-                    {/* Bulwark-style Security Verification Badge Pills */}
-                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                      {isSenderExternal ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-500 border border-amber-500/30">
-                          <AlertTriangle className="size-3" /> External Sender
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30">
-                          <ShieldCheck className="size-3" /> Sovereign Sender
-                        </span>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => setShowSecurityModal(true)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors"
-                        title="SPF Verification"
-                      >
-                        <CheckCircle2 className="size-3" /> SPF: {activeMessage.spfResult?.toUpperCase() || "PASS"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setShowSecurityModal(true)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors"
-                        title="DKIM Signature Verification"
-                      >
-                        <ShieldCheck className="size-3" /> DKIM: {activeMessage.dkimResult?.toUpperCase() || "PASS"} ({activeMessage.from.address.split("@")[1]})
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setShowSecurityModal(true)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 hover:bg-blue-500/20 transition-colors"
-                        title="DMARC Policy Verification"
-                      >
-                        <Shield className="size-3" /> DMARC: {activeMessage.dmarcResult?.toUpperCase() || "PASS"}
-                      </button>
-
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => setShowSecurityModal(true)}
-                        className="h-5 px-1.5 text-[10px] text-muted-foreground hover:text-foreground gap-1"
-                      >
-                        Security Details
-                      </Button>
+            {/* User Account Popover Trigger */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="w-full flex items-center justify-between p-2 rounded-xl bg-card border border-border/60 hover:border-border transition-colors text-left group">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Avatar className={`size-8 text-xs font-bold text-white shrink-0 ${getAvatarColorForEmail(user?.email || "")}`}>
+                      <AvatarFallback className="bg-transparent text-white font-bold">
+                        {user?.email?.[0]?.toUpperCase() || "U"}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold truncate leading-tight">
+                        {user?.displayName || user?.email?.split("@")[0]}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground font-mono truncate">
+                        {user?.email}
+                      </div>
                     </div>
                   </div>
+                  <ChevronsUpDown className="size-3.5 text-muted-foreground group-hover:text-foreground shrink-0" />
+                </button>
+              </PopoverTrigger>
 
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleToggleStar(activeMessage.messageId, activeMessage.isStarred)}
-                      className="h-7 text-xs gap-1"
-                    >
-                      <Star
-                        className={`size-3.5 ${
-                          activeMessage.isStarred ? "text-amber-400 fill-amber-400" : ""
-                        }`}
-                      />
-                      <span>{activeMessage.isStarred ? "Starred" : "Star"}</span>
-                    </Button>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowRawModal(true)}
-                      className="h-7 text-xs gap-1"
-                      title="View RFC 822 EML Source"
-                    >
-                      <Code className="size-3.5" />
-                      <span className="hidden sm:inline">Raw / EML</span>
-                    </Button>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleMarkUnread(activeMessage.messageId)}
-                      className="h-7 text-xs"
-                    >
-                      Mark Unread
-                    </Button>
-
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleMoveToTrash(activeMessage.messageId)}
-                      className="h-7 text-xs gap-1"
-                    >
-                      <Trash2 className="size-3" />
-                      Trash
-                    </Button>
-
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        setComposeTo(activeMessage.from.address);
-                        setComposeSubject(`Re: ${activeMessage.subject}`);
-                        setShowCompose(true);
-                      }}
-                      className="h-7 text-xs gap-1.5 font-semibold"
-                    >
-                      <Reply className="size-3.5" />
-                      Reply
-                    </Button>
+              <PopoverContent side="top" align="start" className="w-80 p-3 space-y-3 shadow-2xl">
+                {/* Active User Header */}
+                <div className="flex items-center gap-2.5 pb-2 border-b border-border/40">
+                  <Avatar className={`size-9 text-xs font-bold text-white shrink-0 ${getAvatarColorForEmail(user?.email || "")}`}>
+                    <AvatarFallback className="bg-transparent text-white font-bold">
+                      {user?.email?.[0]?.toUpperCase() || "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold truncate">{user?.displayName || user?.email}</div>
+                    <div className="text-[11px] text-muted-foreground truncate">{user?.email}</div>
+                    <Badge variant="outline" className="text-[9px] uppercase font-mono px-1 py-0 mt-0.5">
+                      {user?.role?.replace("_", " ")}
+                    </Badge>
                   </div>
                 </div>
 
-                {/* Sender / Recipient Information */}
-                <div className="flex justify-between items-center text-xs">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar className="size-9 border border-border">
-                      <AvatarFallback className="bg-primary/10 text-primary font-bold">
-                        {(activeMessage.from.name || activeMessage.from.address).slice(0, 2).toUpperCase()}
+                {/* Multi-Account Switcher Section */}
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1">
+                    Switch Account
+                  </div>
+                  <div className="space-y-1 max-h-36 overflow-y-auto">
+                    {accounts.map((acc) => {
+                      const isCurrent = acc.userId === user?.userId;
+                      return (
+                        <button
+                          key={acc.userId}
+                          onClick={() => handleSwitchAccount(acc.userId)}
+                          className={`w-full flex items-center justify-between p-1.5 rounded-lg text-left text-xs transition-colors ${
+                            isCurrent ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/60 text-foreground"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Avatar className={`size-6 text-[10px] font-bold text-white shrink-0 ${acc.avatarColor || getAvatarColorForEmail(acc.email)}`}>
+                              <AvatarFallback className="bg-transparent text-white">
+                                {acc.email[0].toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="truncate text-xs font-mono">{acc.email}</span>
+                          </div>
+                          {isCurrent && <Check className="size-3.5 text-primary shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <Link href="/login?addAccount=true">
+                    <Button variant="outline" size="sm" className="w-full text-xs h-7 gap-1 mt-1">
+                      <Plus className="size-3" />
+                      Add another account
+                    </Button>
+                  </Link>
+                </div>
+
+                <Separator />
+
+                {/* Nav Links */}
+                <div className="space-y-0.5 text-xs">
+                  <Link href="/settings">
+                    <div className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-muted/60 transition-colors cursor-pointer">
+                      <Settings className="size-3.5 text-muted-foreground" />
+                      <span>Security & Passkeys</span>
+                    </div>
+                  </Link>
+
+                  {/* Tenant Admin Link */}
+                  {(user?.role === "ORG_ADMIN" || user?.role === "PLATFORM_ADMIN") && (
+                    <Link href={`/org/${user.orgSlug || "default"}/admin`}>
+                      <div className="flex items-center justify-between p-1.5 rounded-lg hover:bg-muted/60 transition-colors cursor-pointer text-primary font-medium">
+                        <div className="flex items-center gap-2">
+                          <Sliders className="size-3.5" />
+                          <span>Tenant Admin Settings</span>
+                        </div>
+                        <ArrowRight className="size-3" />
+                      </div>
+                    </Link>
+                  )}
+
+                  {/* Platform Admin Link */}
+                  {user?.role === "PLATFORM_ADMIN" && (
+                    <Link href="/admin">
+                      <div className="flex items-center justify-between p-1.5 rounded-lg hover:bg-muted/60 transition-colors cursor-pointer text-emerald-500 font-medium">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="size-3.5" />
+                          <span>Platform Governance</span>
+                        </div>
+                        <Badge variant="outline" className="text-[9px] border-emerald-500/30 text-emerald-500">
+                          MASTER
+                        </Badge>
+                      </div>
+                    </Link>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* Sign Out */}
+                <button
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-2 p-1.5 rounded-lg text-destructive hover:bg-destructive/10 transition-colors text-xs font-medium"
+                >
+                  <LogOut className="size-3.5" />
+                  <span>Log out of {user?.email}</span>
+                </button>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </aside>
+
+        {/* ── MESSAGE LIST PANE ── */}
+        <section
+          className={`
+            border-r border-border bg-card/10 flex flex-col shrink-0
+            ${selectedMessageId && isMobile ? "hidden" : "w-full md:w-80 lg:w-96 flex"}
+          `}
+        >
+          {/* List Search & Controls */}
+          <div className="p-3 border-b border-border/60 space-y-2 shrink-0">
+            <div className="relative">
+              <Search className="size-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
+              <Input
+                placeholder="Search messages..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 text-xs h-8 bg-muted/40"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+              <button
+                onClick={() => setFilterUnreadOnly(!filterUnreadOnly)}
+                className={`text-[11px] font-medium transition-colors ${
+                  filterUnreadOnly ? "text-primary font-bold" : "hover:text-foreground"
+                }`}
+              >
+                {filterUnreadOnly ? "Showing Unread" : "Filter Unread"}
+              </button>
+              <span className="font-mono text-[11px]">{filteredMessages.length} messages</span>
+            </div>
+          </div>
+
+          {/* Messages Scroll Area */}
+          <div className="flex-1 overflow-y-auto divide-y divide-border/40">
+            {filteredMessages.map((msg) => {
+              const active = selectedMessageId === msg.id;
+              return (
+                <div
+                  key={msg.id}
+                  onClick={() => loadMessageDetail(msg)}
+                  className={`p-3 cursor-pointer transition-colors text-left relative group ${
+                    active ? "bg-accent/60" : !msg.isRead ? "bg-card/80 hover:bg-muted/40" : "hover:bg-muted/20"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {!msg.isRead && <span className="size-2 rounded-full bg-primary shrink-0" />}
+                      <span className={`text-xs truncate ${!msg.isRead ? "font-bold text-foreground" : "font-medium text-foreground/90"}`}>
+                        {msg.from.name || msg.from.address}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0 font-mono">
+                      {new Date(msg.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </span>
+                  </div>
+
+                  <div className={`text-xs truncate mb-1 ${!msg.isRead ? "font-semibold text-foreground" : "text-foreground/80"}`}>
+                    {msg.subject || "(No Subject)"}
+                  </div>
+
+                  <div className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
+                    {msg.snippet || "(Empty snippet)"}
+                  </div>
+
+                  {/* Message Item Tags */}
+                  {msg.labels && msg.labels.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1 mb-0.5">
+                      {msg.labels.map((lbl) => {
+                        const tagInfo = COLOR_TAGS.find((t) => t.id === lbl);
+                        if (!tagInfo) return null;
+                        return (
+                          <span
+                            key={lbl}
+                            className={`text-[9px] font-medium px-1.5 py-0.2 rounded-full border ${tagInfo.color}`}
+                          >
+                            {tagInfo.name}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Badges / Attachments */}
+                  <div className="flex items-center justify-between mt-2 pt-1 border-t border-border/20">
+                    <div className="flex items-center gap-1.5">
+                      {msg.hasAttachments && (
+                        <Badge variant="outline" className="text-[9px] px-1 py-0 gap-1 border-border/60">
+                          <Paperclip className="size-2.5 text-primary" />
+                          File
+                        </Badge>
+                      )}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleStar(msg.id, msg.isStarred);
+                      }}
+                      className="text-muted-foreground hover:text-amber-500 transition-colors"
+                    >
+                      <Star className={`size-3.5 ${msg.isStarred ? "text-amber-500 fill-amber-500" : ""}`} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {filteredMessages.length === 0 && (
+              <div className="text-center py-16 px-4 text-muted-foreground text-xs">
+                <Mail className="size-8 mx-auto text-muted-foreground/40 mb-2" />
+                <p className="font-medium">No messages found in {folder}.</p>
+                <p className="text-[11px] mt-0.5">Your sovereign inbox is completely up to date.</p>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* ── EMAIL VIEWER PANE (Desktop right, Mobile full-screen when selected) ── */}
+        <main
+          className={`
+            flex-1 flex flex-col bg-background overflow-hidden
+            ${!selectedMessageId && isMobile ? "hidden" : "flex"}
+          `}
+        >
+          {activeMessage ? (
+            <div className="flex-1 flex flex-col h-full overflow-hidden">
+              {/* Bulwark-Grade Action Toolbar */}
+              <div className="h-13 border-b border-border bg-card/40 backdrop-blur-md px-3 flex items-center justify-between shrink-0 gap-2">
+                <div className="flex items-center gap-1">
+                  {/* Mobile Back Button */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedMessageId(null)}
+                    className="md:hidden gap-1 text-xs h-8 px-2"
+                  >
+                    <ArrowLeft className="size-4" />
+                    Back
+                  </Button>
+
+                  {/* Primary Bulwark Reply Actions */}
+                  <Button variant="ghost" size="sm" onClick={handleReply} className="gap-1.5 text-xs h-8">
+                    <Reply className="size-3.5" />
+                    <span className="hidden sm:inline">Reply</span>
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={handleReplyAll} className="gap-1.5 text-xs h-8">
+                    <ReplyAll className="size-3.5" />
+                    <span className="hidden sm:inline">Reply All</span>
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={handleForward} className="gap-1.5 text-xs h-8">
+                    <Forward className="size-3.5" />
+                    <span className="hidden sm:inline">Forward</span>
+                  </Button>
+
+                  <Separator orientation="vertical" className="h-4 mx-1" />
+
+                  {/* Bulwark Message Triage Controls */}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleArchive(activeMessage.id)}
+                    className="size-8"
+                    title="Archive"
+                  >
+                    <Archive className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleDelete(activeMessage.id)}
+                    className="size-8 hover:text-destructive"
+                    title="Move to Trash"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleToggleRead(activeMessage.id, activeMessage.isRead)}
+                    className="size-8"
+                    title={activeMessage.isRead ? "Mark as unread" : "Mark as read"}
+                  >
+                    <Mail className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleToggleStar(activeMessage.id, activeMessage.isStarred)}
+                    className="size-8"
+                    title="Star / Flag"
+                  >
+                    <Star className={`size-3.5 ${activeMessage.isStarred ? "text-amber-500 fill-amber-500" : ""}`} />
+                  </Button>
+
+                  {/* Color Tag Picker */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger className="size-8 inline-flex items-center justify-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground" title="Color Tags">
+                      <Tag className="size-3.5" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-44 text-xs">
+                      {COLOR_TAGS.map((tag) => {
+                        const isTagged = activeMessage.labels?.includes(tag.id);
+                        return (
+                          <DropdownMenuItem
+                            key={tag.id}
+                            onClick={() => handleToggleTag(activeMessage.id, tag.id)}
+                            className="flex items-center justify-between text-xs cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className={`size-2.5 rounded-full ${tag.dot}`} />
+                              <span>{tag.name}</span>
+                            </div>
+                            {isTagged && <Check className="size-3 text-primary" />}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                {/* Bulwark Overflow More Menu */}
+                <div className="flex items-center gap-1">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger className="size-8 inline-flex items-center justify-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground">
+                      <MoreVertical className="size-3.5" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48 text-xs">
+                      <DropdownMenuItem onClick={() => setShowEmlViewer(true)} className="gap-2 text-xs">
+                        <FileCode className="size-3.5" />
+                        View Raw RFC 822 EML
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => window.print()} className="gap-2 text-xs">
+                        <Printer className="size-3.5" />
+                        Print Message
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => {
+                          navigator.clipboard.writeText(activeMessage.messageId);
+                          showToast("Message-ID copied to clipboard.");
+                        }}
+                        className="gap-2 text-xs"
+                      >
+                        <Copy className="size-3.5" />
+                        Copy Message-ID
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+
+              {/* Message Content Scroll Area */}
+              <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+                {/* Subject Header */}
+                <div className="space-y-2">
+                  <h1 className="text-xl md:text-2xl font-bold tracking-tight text-foreground leading-snug">
+                    {activeMessage.subject || "(No Subject)"}
+                  </h1>
+                  {activeMessage.labels && activeMessage.labels.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {activeMessage.labels.map((lbl) => {
+                        const tagInfo = COLOR_TAGS.find((t) => t.id === lbl);
+                        if (!tagInfo) return null;
+                        return (
+                          <span
+                            key={lbl}
+                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${tagInfo.color}`}
+                          >
+                            {tagInfo.name}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Bulwark Security & Authentication Badges */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant="outline" className="text-[10px] font-mono border-emerald-500/40 text-emerald-500 gap-1">
+                    <ShieldCheck className="size-3" />
+                    SPF: {activeMessage.spfResult || "PASS"}
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] font-mono border-emerald-500/40 text-emerald-500 gap-1">
+                    <ShieldCheck className="size-3" />
+                    DKIM: {activeMessage.dkimResult || "PASS"}
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] font-mono border-emerald-500/40 text-emerald-500 gap-1">
+                    <ShieldCheck className="size-3" />
+                    DMARC: {activeMessage.dmarcResult || "PASS"}
+                  </Badge>
+                  {isExternalSender && (
+                    <Badge variant="secondary" className="text-[10px] gap-1 bg-amber-500/10 text-amber-500 border-amber-500/30">
+                      <AlertTriangle className="size-3" />
+                      External Sender
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Sender & Recipient Metadata Card */}
+                <div className="flex items-start justify-between gap-3 p-3 rounded-xl bg-card/60 border border-border/40">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar className={`size-10 font-bold text-white shrink-0 ${getAvatarColorForEmail(activeMessage.from.address)}`}>
+                      <AvatarFallback className="bg-transparent text-white font-bold">
+                        {activeMessage.from.address[0].toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <div>
-                      <div className="font-semibold text-foreground">
-                        {activeMessage.from.name || activeMessage.from.address}{" "}
-                        <span className="font-normal text-muted-foreground">
-                          &lt;{activeMessage.from.address}&gt;
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">
-                        to {activeMessage.to.map((t) => t.name || t.address).join(", ") || "Undisclosed"}
-                        {activeMessage.cc && activeMessage.cc.length > 0 && (
-                          <span className="ml-1 text-muted-foreground/80">
-                            (Cc: {activeMessage.cc.map((t) => t.name || t.address).join(", ")})
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold flex items-center gap-2 truncate">
+                        <span>{activeMessage.from.name || activeMessage.from.address}</span>
+                        {activeMessage.from.name && (
+                          <span className="text-xs text-muted-foreground font-mono font-normal">
+                            &lt;{activeMessage.from.address}&gt;
                           </span>
                         )}
                       </div>
+                      <div className="text-xs text-muted-foreground font-mono truncate">
+                        To: {activeMessage.to.map((t) => t.name || t.address).join(", ")}
+                      </div>
+                      {activeMessage.cc && activeMessage.cc.length > 0 && (
+                        <div className="text-[11px] text-muted-foreground font-mono truncate">
+                          Cc: {activeMessage.cc.map((t) => t.name || t.address).join(", ")}
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <span className="text-[11px] text-muted-foreground">
-                    {new Date(activeMessage.date).toLocaleString([], {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}
-                  </span>
+                  <div className="text-right shrink-0">
+                    <div className="text-xs font-mono font-medium">
+                      {new Date(activeMessage.date).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground font-mono">
+                      {new Date(activeMessage.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </div>
+                  </div>
                 </div>
 
-                {/* Attachment Bar */}
-                {activeMessage.attachments && activeMessage.attachments.length > 0 && (
-                  <div className="pt-2">
-                    <div className="text-[11px] font-semibold text-muted-foreground mb-1.5 flex items-center gap-1">
-                      <Paperclip className="size-3" />
-                      Attachments ({activeMessage.attachments.length})
+                {/* Bulwark Remote Images Privacy Shield */}
+                {activeMessage.body.html && !loadRemoteImages && (
+                  <div className="p-2.5 rounded-lg bg-muted/40 border border-border/60 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Lock className="size-3.5 text-primary" />
+                      <span>Remote images were blocked to protect your sovereign privacy.</span>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {activeMessage.attachments.map((att) => (
-                        <a
-                          key={att.id}
-                          href={att.downloadUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border bg-card/60 hover:bg-muted text-primary text-xs transition-colors"
-                        >
-                          <Paperclip className="size-3 text-muted-foreground" />
-                          <span className="font-medium">{att.filename}</span>
-                          <span className="text-muted-foreground text-[10px]">
-                            ({Math.round(att.sizeBytes / 1024)} KB)
-                          </span>
-                        </a>
-                      ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setLoadRemoteImages(true)}
+                      className="text-xs h-7 px-2"
+                    >
+                      Load Images
+                    </Button>
+                  </div>
+                )}
+
+                {/* Bulwark Attachment Cards Grid */}
+                {activeMessage.attachments && activeMessage.attachments.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-border/40">
+                    <div className="flex items-center justify-between text-xs font-semibold">
+                      <span className="flex items-center gap-1.5">
+                        <Paperclip className="size-3.5 text-primary" />
+                        Attachments ({activeMessage.attachments.length})
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                      {activeMessage.attachments.map((att) => {
+                        const { icon: AttIcon, color, bg } = getAttachmentIcon(att.contentType, att.filename);
+                        return (
+                          <div
+                            key={att.id}
+                            className="p-2.5 rounded-xl border border-border/60 bg-card hover:border-primary/50 transition-colors flex items-center justify-between gap-2 group"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className={`size-8 rounded-lg ${bg} ${color} flex items-center justify-center shrink-0`}>
+                                <AttIcon className="size-4" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-medium truncate" title={att.filename}>
+                                  {att.filename}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground font-mono">
+                                  {formatBytes(att.sizeBytes)}
+                                </div>
+                              </div>
+                            </div>
+                            <a
+                              href={att.downloadUrl || `${API_BASE_URL}/api/rpc/mail/attachment-content?id=${att.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              download={att.filename}
+                            >
+                              <Button variant="ghost" size="icon" className="size-7 shrink-0 text-muted-foreground hover:text-foreground">
+                                <Download className="size-3.5" />
+                              </Button>
+                            </a>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
-              </div>
 
-              {/* Body Rendering Controls */}
-              <div className="px-4 py-1.5 border-b border-border/60 bg-muted/20 flex justify-end gap-1">
-                <Button
-                  variant={bodyFormat === "html" ? "secondary" : "ghost"}
-                  size="xs"
-                  onClick={() => setBodyFormat("html")}
-                  className="text-[11px] h-6 px-2"
-                >
-                  Rich HTML
-                </Button>
-                <Button
-                  variant={bodyFormat === "text" ? "secondary" : "ghost"}
-                  size="xs"
-                  onClick={() => setBodyFormat("text")}
-                  className="text-[11px] h-6 px-2"
-                >
-                  Plain Text
-                </Button>
-              </div>
+                <Separator />
 
-              {/* Message Body Content */}
-              <ScrollArea className="flex-1 p-6">
-                {bodyFormat === "html" && activeMessage.body.html ? (
-                  <div
-                    className="prose dark:prose-invert max-w-none text-xs leading-relaxed bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 p-6 rounded-lg border border-border shadow-sm min-h-[300px]"
-                    dangerouslySetInnerHTML={{ __html: activeMessage.body.html }}
-                  />
-                ) : (
-                  <pre className="font-mono text-xs whitespace-pre-wrap break-words text-foreground/90 leading-relaxed bg-muted/10 p-4 rounded-md border border-border/50">
-                    {activeMessage.body.text || "(Empty email body)"}
-                  </pre>
-                )}
-              </ScrollArea>
+                {/* Email Body Area */}
+                <div className="min-h-[250px] leading-relaxed text-sm">
+                  {activeMessage.body.html ? (
+                    <div
+                      className="prose dark:prose-invert max-w-none break-words text-sm overflow-x-auto"
+                      dangerouslySetInnerHTML={{
+                        __html: loadRemoteImages
+                          ? activeMessage.body.html
+                          : activeMessage.body.html.replace(/src=["']http/gi, 'data-blocked="true" src="about:blank'),
+                      }}
+                    />
+                  ) : (
+                    <pre className="font-sans whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+                      {activeMessage.body.text || "(Empty body)"}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
+              <Mail className="size-12 text-muted-foreground/30 mb-3" />
+              <h3 className="text-base font-semibold text-foreground">Select a message</h3>
+              <p className="text-xs text-muted-foreground max-w-sm mt-1">
+                Choose an email from the list to view its contents, inspect DKIM/SPF headers, and manage attachments.
+              </p>
             </div>
           )}
         </main>
       </div>
 
-      {/* ── ADVANCED FLOATING COMPOSER MODAL (SHADCN CARD) ── */}
+      {/* ── BULWARK-GRADE EMAIL COMPOSER MODAL ── */}
       {showCompose && (
-        <Card className="fixed bottom-4 right-4 w-full max-w-xl border-border shadow-2xl z-50 overflow-hidden flex flex-col animate-in slide-in-from-bottom-5">
-          <CardHeader className="p-3 px-4 border-b border-border flex flex-row items-center justify-between space-y-0 bg-muted/40">
-            <div className="flex items-center gap-2">
-              <Edit3 className="size-3.5 text-primary" />
-              <CardTitle className="text-sm font-semibold">New Message</CardTitle>
-              {composePriority === "high" && (
-                <Badge variant="destructive" className="h-4 px-1.5 text-[9px] uppercase font-bold">
-                  High Priority
-                </Badge>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant={composePriority === "high" ? "destructive" : "ghost"}
-                size="icon-xs"
-                onClick={() => setComposePriority((p) => (p === "high" ? "normal" : "high"))}
-                title="Toggle High Priority Flag"
-              >
-                <Flame className={`size-3.5 ${composePriority === "high" ? "text-white" : "text-muted-foreground"}`} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => setShowCompose(false)}
-              >
-                <X className="size-4 text-muted-foreground" />
-              </Button>
-            </div>
-          </CardHeader>
-
-          <form onSubmit={handleSendEmail} className="flex flex-col">
-            {/* TO field + CC/BCC toggles */}
-            <div className="p-3 border-b border-border/60 relative flex items-center justify-between gap-2">
-              <div className="flex-1">
-                <Input
-                  type="text"
-                  placeholder="To: (recipient@example.com)"
-                  value={composeTo}
-                  onChange={(e) => handleComposeToChange(e.target.value)}
-                  onFocus={() => {
-                    const last = composeTo.split(",").pop()?.trim() || "";
-                    if (last) handleComposeToChange(composeTo);
-                  }}
-                  required
-                  className="border-none shadow-none focus-visible:ring-0 p-0 h-7 text-xs placeholder:text-muted-foreground"
-                />
-                {showSuggestions && contactSuggestions.length > 0 && (
-                  <div className="absolute left-3 top-10 w-72 bg-popover border border-border rounded-md shadow-xl z-50 overflow-hidden divide-y divide-border/50 animate-in fade-in">
-                    {contactSuggestions.map((c) => (
-                      <div
-                        key={c.id}
-                        onClick={() => handleSelectSuggestion(c)}
-                        className="p-2 px-3 text-xs hover:bg-muted cursor-pointer flex flex-col transition-colors"
-                      >
-                        <span className="font-semibold text-foreground">{c.name}</span>
-                        <span className="text-[10px] text-muted-foreground">{c.email}</span>
-                      </div>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4">
+          <Card className="w-full sm:max-w-2xl h-[90vh] sm:h-auto sm:max-h-[85vh] border-border bg-card shadow-2xl flex flex-col rounded-t-2xl sm:rounded-2xl">
+            {/* Composer Header */}
+            <CardHeader className="h-12 border-b border-border px-4 flex flex-row items-center justify-between shrink-0">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Edit3 className="size-4 text-primary" />
+                New Message
+              </CardTitle>
+              <div className="flex items-center gap-1">
+                {/* Template Picker */}
+                <DropdownMenu open={showTemplatePicker} onOpenChange={setShowTemplatePicker}>
+                  <DropdownMenuTrigger className="h-7 px-2 text-xs inline-flex items-center gap-1 text-muted-foreground hover:text-foreground rounded-md border border-input bg-transparent">
+                    <Sparkles className="size-3 text-primary" />
+                    Insert Template
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56 text-xs">
+                    {templates.map((tmpl) => (
+                      <DropdownMenuItem key={tmpl.id} onClick={() => handleInsertTemplate(tmpl)} className="gap-2 text-xs">
+                        <FileText className="size-3.5 text-primary" />
+                        <span className="truncate">{tmpl.name}</span>
+                      </DropdownMenuItem>
                     ))}
+                    {templates.length === 0 && (
+                      <div className="p-2 text-center text-muted-foreground text-[11px]">
+                        No templates saved.
+                      </div>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setShowCompose(false)}>
+                  <X className="size-4" />
+                </Button>
+              </div>
+            </CardHeader>
+
+            {/* Composer Inputs */}
+            <form onSubmit={handleSendEmail} className="flex-1 flex flex-col overflow-hidden">
+              <div className="p-3 border-b border-border/40 space-y-2 shrink-0">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex-1 flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-medium w-8">To:</span>
+                    <Input
+                      required
+                      value={composeTo}
+                      onChange={(e) => setComposeTo(e.target.value)}
+                      placeholder="recipient@example.com (comma separated)"
+                      className="border-0 shadow-none text-xs h-7 px-1 focus-visible:ring-0"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCcBcc(!showCcBcc)}
+                    className="text-[11px] text-muted-foreground hover:text-foreground font-medium"
+                  >
+                    {showCcBcc ? "Hide Cc/Bcc" : "Cc / Bcc"}
+                  </button>
+                </div>
+
+                {showCcBcc && (
+                  <div className="space-y-1.5 pt-1 border-t border-border/20">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground font-medium w-8">Cc:</span>
+                      <Input
+                        value={composeCc}
+                        onChange={(e) => setComposeCc(e.target.value)}
+                        placeholder="cc@example.com"
+                        className="border-0 shadow-none text-xs h-7 px-1 focus-visible:ring-0"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground font-medium w-8">Bcc:</span>
+                      <Input
+                        value={composeBcc}
+                        onChange={(e) => setComposeBcc(e.target.value)}
+                        placeholder="bcc@example.com"
+                        className="border-0 shadow-none text-xs h-7 px-1 focus-visible:ring-0"
+                      />
+                    </div>
                   </div>
                 )}
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <Button
-                  type="button"
-                  variant={showCc ? "secondary" : "ghost"}
-                  size="xs"
-                  onClick={() => setShowCc(!showCc)}
-                  className="h-6 px-1.5 text-[11px] text-muted-foreground"
-                >
-                  Cc
-                </Button>
-                <Button
-                  type="button"
-                  variant={showBcc ? "secondary" : "ghost"}
-                  size="xs"
-                  onClick={() => setShowBcc(!showBcc)}
-                  className="h-6 px-1.5 text-[11px] text-muted-foreground"
-                >
-                  Bcc
-                </Button>
-              </div>
-            </div>
 
-            {/* Optional CC Field */}
-            {showCc && (
-              <div className="p-2.5 px-3 border-b border-border/60 bg-muted/10 animate-in fade-in">
-                <Input
-                  type="text"
-                  placeholder="Cc: (copy recipients)"
-                  value={composeCc}
-                  onChange={(e) => setComposeCc(e.target.value)}
-                  className="border-none shadow-none focus-visible:ring-0 p-0 h-6 text-xs placeholder:text-muted-foreground"
-                />
-              </div>
-            )}
-
-            {/* Optional BCC Field */}
-            {showBcc && (
-              <div className="p-2.5 px-3 border-b border-border/60 bg-muted/10 animate-in fade-in">
-                <Input
-                  type="text"
-                  placeholder="Bcc: (blind copy recipients)"
-                  value={composeBcc}
-                  onChange={(e) => setComposeBcc(e.target.value)}
-                  className="border-none shadow-none focus-visible:ring-0 p-0 h-6 text-xs placeholder:text-muted-foreground"
-                />
-              </div>
-            )}
-
-            {/* Subject Field */}
-            <div className="p-3 border-b border-border/60">
-              <Input
-                type="text"
-                placeholder="Subject"
-                value={composeSubject}
-                onChange={(e) => setComposeSubject(e.target.value)}
-                required
-                className="border-none shadow-none focus-visible:ring-0 p-0 h-7 text-xs font-semibold placeholder:text-muted-foreground"
-              />
-            </div>
-
-            {/* Rich Formatting Toolbar */}
-            <div className="px-3 py-1.5 border-b border-border/40 bg-muted/30 flex items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => insertFormatting("**", "**")}
-                title="Bold (⌘B)"
-              >
-                <Bold className="size-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => insertFormatting("*", "*")}
-                title="Italic (⌘I)"
-              >
-                <Italic className="size-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => insertFormatting("- ")}
-                title="Bullet List"
-              >
-                <List className="size-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => insertFormatting("> ")}
-                title="Blockquote"
-              >
-                <Quote className="size-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => insertFormatting("`", "`")}
-                title="Inline Code"
-              >
-                <Code className="size-3.5" />
-              </Button>
-            </div>
-
-            {/* Body Textarea */}
-            <div className="p-3">
-              <Textarea
-                ref={composeTextareaRef}
-                placeholder="Write your email here... (Press ⌘+Enter to send)"
-                rows={8}
-                value={composeBody}
-                onChange={(e) => setComposeBody(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                    e.preventDefault();
-                    handleSendEmail();
-                  }
-                }}
-                required
-                className="border-none shadow-none focus-visible:ring-0 p-0 text-xs resize-none placeholder:text-muted-foreground"
-              />
-            </div>
-
-            {/* Draft File Attachments */}
-            {composeAttachments.length > 0 && (
-              <div className="px-3 pb-2 flex flex-wrap gap-1.5">
-                {composeAttachments.map((file, idx) => (
-                  <Badge
-                    key={idx}
-                    variant="secondary"
-                    className="gap-1.5 pl-2 pr-1 py-0.5 text-[11px] font-normal"
-                  >
-                    <Paperclip className="size-3 text-muted-foreground" />
-                    <span>{file.name}</span>
-                    <span className="text-muted-foreground text-[9px]">
-                      ({Math.round(file.size / 1024)} KB)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeAttachment(idx)}
-                      className="hover:text-destructive transition-colors ml-0.5"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </Badge>
-                ))}
-              </div>
-            )}
-
-            <input
-              type="file"
-              ref={fileInputRef}
-              multiple
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-
-            {/* Footer with Send & Attachment buttons */}
-            <div className="p-3 border-t border-border bg-muted/20 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="h-8 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
-                >
-                  <Paperclip className="size-3.5" />
-                  <span>Attach</span>
-                </Button>
-                <span className="text-[10px] text-muted-foreground hidden sm:inline">
-                  ⌘ + Enter to send
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowCompose(false)}
-                  className="h-8 text-xs"
-                >
-                  Discard
-                </Button>
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={sendingMail}
-                  className="h-8 text-xs gap-1 font-semibold"
-                >
-                  <Send className="size-3" />
-                  {sendingMail ? "Sending..." : "Send"}
-                </Button>
-              </div>
-            </div>
-          </form>
-        </Card>
-      )}
-
-      {/* ── COMMAND PALETTE MODAL (⌘K) ── */}
-      {showCommandPalette && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-start justify-center pt-20 p-4 animate-in fade-in">
-          <Card className="w-full max-w-lg border-border shadow-2xl overflow-hidden animate-in zoom-in-95">
-            <div className="p-3 border-b border-border flex items-center gap-2 bg-card">
-              <Command className="size-4 text-primary shrink-0" />
-              <Input
-                ref={commandInputRef}
-                type="text"
-                placeholder="Type a command or search actions..."
-                value={commandQuery}
-                onChange={(e) => {
-                  setCommandQuery(e.target.value);
-                  setActiveCommandIndex(0);
-                }}
-                onKeyDown={handleCommandKeyDown}
-                className="border-none shadow-none focus-visible:ring-0 p-0 h-7 text-xs placeholder:text-muted-foreground"
-              />
-              <kbd className="px-1.5 py-0.5 rounded border border-border text-[10px] text-muted-foreground">
-                Esc
-              </kbd>
-            </div>
-
-            <ScrollArea className="max-h-80 p-2">
-              {filteredCommands.length === 0 ? (
-                <div className="p-6 text-center text-xs text-muted-foreground">
-                  No commands found matching "{commandQuery}"
+                <div className="flex items-center gap-2 pt-1 border-t border-border/20">
+                  <span className="text-xs text-muted-foreground font-medium w-8">Subj:</span>
+                  <Input
+                    value={composeSubject}
+                    onChange={(e) => setComposeSubject(e.target.value)}
+                    placeholder="Subject line"
+                    className="border-0 shadow-none text-xs h-7 px-1 focus-visible:ring-0 font-medium"
+                  />
                 </div>
-              ) : (
-                <div className="space-y-1">
-                  {filteredCommands.map((cmd, idx) => {
-                    const isFocused = idx === activeCommandIndex;
-                    const IconComp = cmd.icon;
-                    return (
-                      <div
-                        key={cmd.id}
-                        onClick={() => {
-                          setShowCommandPalette(false);
-                          cmd.run();
-                        }}
-                        onMouseEnter={() => setActiveCommandIndex(idx)}
-                        className={`p-2 px-3 rounded-md cursor-pointer flex items-center justify-between text-xs transition-colors ${
-                          isFocused ? "bg-accent text-accent-foreground font-medium" : "hover:bg-muted/50 text-foreground"
-                        }`}
+              </div>
+
+              {/* Body Textarea */}
+              <div className="flex-1 p-3 overflow-y-auto">
+                <Textarea
+                  value={composeBody}
+                  onChange={(e) => setComposeBody(e.target.value)}
+                  placeholder="Write your sovereign message..."
+                  className="w-full h-full min-h-[160px] border-0 shadow-none resize-none text-xs leading-relaxed focus-visible:ring-0 p-0"
+                />
+              </div>
+
+              {/* Uploaded Attachment Chips */}
+              {composeAttachments.length > 0 && (
+                <div className="px-3 py-2 border-t border-border/40 bg-muted/20 flex flex-wrap gap-2 shrink-0">
+                  {composeAttachments.map((att, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-card border border-border text-xs text-foreground font-mono"
+                    >
+                      <Paperclip className="size-3 text-primary shrink-0" />
+                      <span className="truncate max-w-[140px]">{att.name}</span>
+                      <span className="text-muted-foreground text-[10px]">({formatBytes(att.size)})</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAttachment(idx)}
+                        className="hover:text-destructive transition-colors ml-1"
                       >
-                        <div className="flex items-center gap-2.5">
-                          <IconComp className={`size-4 ${isFocused ? "text-primary" : "text-muted-foreground"}`} />
-                          <span>{cmd.title}</span>
-                          <span className="text-[10px] text-muted-foreground/60 uppercase">
-                            {cmd.group}
-                          </span>
-                        </div>
-                        {cmd.shortcut && (
-                          <kbd className="px-1.5 py-0.5 rounded border border-border/80 bg-muted/40 text-[10px] font-mono text-muted-foreground">
-                            {cmd.shortcut}
-                          </kbd>
-                        )}
-                      </div>
-                    );
-                  })}
+                        <X className="size-3" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
-            </ScrollArea>
+
+              {/* Composer Footer Actions */}
+              <CardFooter className="h-13 border-t border-border px-3 flex items-center justify-between shrink-0 bg-muted/10">
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      multiple
+                      onChange={handleFileAttachment}
+                      className="hidden"
+                    />
+                    <div className="size-8 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">
+                      <Paperclip className="size-4" />
+                    </div>
+                  </label>
+                  <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                    Max: {formatBytes(user?.maxSingleFileSizeBytes ?? 26214400)} / file
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowCompose(false)}
+                    className="text-xs h-8"
+                  >
+                    Discard
+                  </Button>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={isSending}
+                    className="h-8 gap-1.5 text-xs font-semibold px-4"
+                  >
+                    <Send className="size-3.5" />
+                    {isSending ? "Sending..." : "Send (⌘+Enter)"}
+                  </Button>
+                </div>
+              </CardFooter>
+            </form>
           </Card>
         </div>
       )}
 
-      {/* ── SECURITY DETAILS INSPECTION MODAL ── */}
-      {showSecurityModal && activeMessage && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <Card className="w-full max-w-lg border-border shadow-2xl animate-in zoom-in-95">
-            <CardHeader className="p-4 border-b border-border flex flex-row items-center justify-between space-y-0 bg-muted/30">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="size-5 text-emerald-500" />
-                <div>
-                  <CardTitle className="text-sm font-bold">Authentication & Security Report</CardTitle>
-                  <CardDescription className="text-xs">
-                    RFC 8601 Cryptographic Validation for this message
-                  </CardDescription>
-                </div>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => setShowSecurityModal(false)}
-              >
-                <X className="size-4 text-muted-foreground" />
-              </Button>
-            </CardHeader>
-
-            <CardContent className="p-5 space-y-4 text-xs">
-              {/* Overall status chip */}
-              <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 flex items-start gap-3">
-                <CheckCircle2 className="size-5 text-emerald-500 shrink-0 mt-0.5" />
-                <div className="space-y-0.5">
-                  <div className="font-semibold text-emerald-600 dark:text-emerald-400">
-                    Authentication Passed
-                  </div>
-                  <div className="text-[11px] text-muted-foreground leading-relaxed">
-                    This message was verified against official domain security policies. The sender identity, SPF route, and DKIM cryptographic signature are authentic.
-                  </div>
-                </div>
-              </div>
-
-              {/* Security Items Breakdown */}
-              <div className="space-y-2 divide-y divide-border/60">
-                <div className="pt-2 flex justify-between items-center">
-                  <div>
-                    <div className="font-semibold">SPF (Sender Policy Framework)</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      Validates sender mail server IP against DNS records
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-500 font-semibold">
-                    PASS
-                  </Badge>
-                </div>
-
-                <div className="pt-2 flex justify-between items-center">
-                  <div>
-                    <div className="font-semibold">DKIM (DomainKeys Identified Mail)</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      RSA-256 digital signature verified (selector: ci._domainkey)
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-500 font-semibold">
-                    PASS
-                  </Badge>
-                </div>
-
-                <div className="pt-2 flex justify-between items-center">
-                  <div>
-                    <div className="font-semibold">DMARC Policy Compliance</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      Domain alignment and enforcement policy
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="border-blue-500/50 bg-blue-500/10 text-blue-500 font-semibold">
-                    PASS
-                  </Badge>
-                </div>
-
-                <div className="pt-2 flex justify-between items-center">
-                  <div>
-                    <div className="font-semibold">In-Transit Encryption</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      TLS 1.3 Cipher Suite (AES-256-GCM)
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="border-border/80 font-mono text-[10px]">
-                    TLSv1.3
-                  </Badge>
-                </div>
-              </div>
-            </CardContent>
-
-            <CardFooter className="p-3 px-5 border-t border-border bg-muted/20 flex justify-end">
-              <Button size="sm" onClick={() => setShowSecurityModal(false)} className="h-8 text-xs font-semibold">
-                Close Report
-              </Button>
-            </CardFooter>
-          </Card>
-        </div>
-      )}
-
-      {/* ── RAW EML / FULL RFC 822 HEADERS MODAL ── */}
-      {showRawModal && activeMessage && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <Card className="w-full max-w-2xl max-h-[85vh] border-border shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95">
-            <CardHeader className="p-3 px-4 border-b border-border flex flex-row items-center justify-between space-y-0 bg-muted/40">
-              <div className="flex items-center gap-2">
+      {/* ── RAW RFC 822 EML VIEWER MODAL ── */}
+      {showEmlViewer && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="w-full max-w-3xl h-[80vh] border-border bg-card shadow-2xl flex flex-col">
+            <CardHeader className="h-12 border-b border-border px-4 flex flex-row items-center justify-between shrink-0">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <FileCode className="size-4 text-primary" />
-                <CardTitle className="text-sm font-semibold">Raw RFC 822 EML Message Source</CardTitle>
-              </div>
-              <div className="flex items-center gap-1.5">
+                Raw RFC 822 EML Message Headers
+              </CardTitle>
+              <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleCopyRawEml}
                   className="h-7 text-xs gap-1"
+                  onClick={() => {
+                    navigator.clipboard.writeText(rawEmlContent);
+                    setRawEmlCopied(true);
+                    setTimeout(() => setRawEmlCopied(false), 2000);
+                  }}
                 >
-                  {copiedRaw ? (
-                    <>
-                      <Check className="size-3 text-emerald-500" />
-                      <span className="text-emerald-500">Copied</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="size-3" />
-                      <span>Copy Source</span>
-                    </>
-                  )}
+                  {rawEmlCopied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+                  {rawEmlCopied ? "Copied" : "Copy EML"}
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => setShowRawModal(false)}
-                >
-                  <X className="size-4 text-muted-foreground" />
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setShowEmlViewer(false)}>
+                  <X className="size-4" />
                 </Button>
               </div>
             </CardHeader>
-
-            <ScrollArea className="flex-1 p-4 bg-muted/20">
-              <pre className="font-mono text-[11px] leading-relaxed text-foreground select-all whitespace-pre-wrap break-all">
-                {rawEmlContent}
-              </pre>
-            </ScrollArea>
+            <CardContent className="flex-1 p-3 overflow-y-auto font-mono text-[11px] leading-relaxed bg-black/20">
+              <pre className="text-foreground/90 whitespace-pre-wrap">{rawEmlContent}</pre>
+            </CardContent>
           </Card>
-        </div>
-      )}
-
-      {/* ── TOAST NOTIFICATION ── */}
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-card border border-primary/50 text-foreground px-4 py-2.5 rounded-lg shadow-xl text-xs font-medium z-50 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
-          <CheckCircle2 className="size-4 text-primary shrink-0" />
-          <span>{toast}</span>
         </div>
       )}
     </div>
