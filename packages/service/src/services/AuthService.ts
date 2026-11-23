@@ -174,6 +174,22 @@ export class AuthService {
 
   // --- WebAuthn Passkeys ---
 
+  static resolveHostAndOrigin(host?: string): { cleanHost: string; expectedOrigin: string } {
+    let cleanCandidate = (host || "").split(":")[0].trim();
+    if (!cleanCandidate || cleanCandidate === "api_server" || cleanCandidate.includes("localhost:4000")) {
+      try {
+        cleanCandidate = new URL(env.FRONTEND_URL || "https://webmail.cellsweb.com").hostname;
+      } catch {
+        cleanCandidate = "webmail.cellsweb.com";
+      }
+    }
+    const isLocal = cleanCandidate === "localhost" || cleanCandidate === "127.0.0.1";
+    const expectedOrigin = isLocal
+      ? (host && host.includes(":") ? `http://${host}` : `http://${cleanCandidate}:3000`)
+      : `https://${cleanCandidate}`;
+    return { cleanHost: cleanCandidate, expectedOrigin };
+  }
+
   static async generatePasskeyRegistrationOptions(user: IUser, host?: string) {
     const userCredentials = await CredentialModel.find({ userId: user._id, type: "PASSKEY" });
     const excludeCredentials = userCredentials.map((c) => ({
@@ -181,7 +197,7 @@ export class AuthService {
       transports: c.transports as any,
     }));
 
-    const cleanHost = (host || new URL(env.FRONTEND_URL || "http://localhost:3000").hostname).split(":")[0];
+    const { cleanHost } = this.resolveHostAndOrigin(host);
 
     const options = await generateRegistrationOptions({
       rpName: "CellsInbox Enterprise",
@@ -206,10 +222,7 @@ export class AuthService {
     expectedChallenge: string,
     host?: string,
   ) {
-    const cleanHost = (host || new URL(env.FRONTEND_URL || "http://localhost:3000").hostname).split(":")[0];
-    const expectedOrigin = host
-      ? (host.includes("localhost") ? `http://${host}` : `https://${cleanHost}`)
-      : (env.FRONTEND_URL || "http://localhost:3000");
+    const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
     const expectedRPID = cleanHost;
 
     const verification = await verifyRegistrationResponse({
@@ -244,7 +257,7 @@ export class AuthService {
       }));
     }
 
-    const cleanHost = (host || new URL(env.FRONTEND_URL || "http://localhost:3000").hostname).split(":")[0];
+    const { cleanHost } = this.resolveHostAndOrigin(host);
 
     const options = await generateAuthenticationOptions({
       rpID: cleanHost,
@@ -261,10 +274,7 @@ export class AuthService {
     expectedChallenge: string,
     host?: string,
   ) {
-    const cleanHost = (host || new URL(env.FRONTEND_URL || "http://localhost:3000").hostname).split(":")[0];
-    const expectedOrigin = host
-      ? (host.includes("localhost") ? `http://${host}` : `https://${cleanHost}`)
-      : (env.FRONTEND_URL || "http://localhost:3000");
+    const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
     const expectedRPID = cleanHost;
 
     const cred = await CredentialModel.findOne({
