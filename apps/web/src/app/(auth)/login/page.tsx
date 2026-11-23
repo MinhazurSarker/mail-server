@@ -60,7 +60,7 @@ export default function LoginPage() {
         throw new Error("Unable to initialize Passkey authentication options");
       }
 
-      const authResp = await startAuthentication(optRes.options);
+      const authResp = await startAuthentication({ optionsJSON: optRes.options });
 
       const verifyRes = await rpcCall<{
         status: string;

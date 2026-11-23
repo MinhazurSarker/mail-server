@@ -167,16 +167,18 @@ export class AuthService {
 
   // --- WebAuthn Passkeys ---
 
-  static async generatePasskeyRegistrationOptions(user: IUser) {
+  static async generatePasskeyRegistrationOptions(user: IUser, host?: string) {
     const userCredentials = await CredentialModel.find({ userId: user._id, type: "PASSKEY" });
     const excludeCredentials = userCredentials.map((c) => ({
       id: c.credentialId!,
       transports: c.transports as any,
     }));
 
+    const cleanHost = (host || new URL(env.FRONTEND_URL || "http://localhost:3000").hostname).split(":")[0];
+
     const options = await generateRegistrationOptions({
       rpName: "CellsInbox Enterprise",
-      rpID: new URL(env.FRONTEND_URL || "http://localhost:3000").hostname,
+      rpID: cleanHost,
       userID: new TextEncoder().encode(user._id.toString()),
       userName: user.email,
       userDisplayName: user.displayName || user.email,
@@ -195,9 +197,13 @@ export class AuthService {
     user: IUser,
     response: RegistrationResponseJSON,
     expectedChallenge: string,
+    host?: string,
   ) {
-    const expectedOrigin = env.FRONTEND_URL || "http://localhost:3000";
-    const expectedRPID = new URL(expectedOrigin).hostname;
+    const cleanHost = (host || new URL(env.FRONTEND_URL || "http://localhost:3000").hostname).split(":")[0];
+    const expectedOrigin = host
+      ? (host.includes("localhost") ? `http://${host}` : `https://${cleanHost}`)
+      : (env.FRONTEND_URL || "http://localhost:3000");
+    const expectedRPID = cleanHost;
 
     const verification = await verifyRegistrationResponse({
       response,
@@ -221,7 +227,7 @@ export class AuthService {
     return verification;
   }
 
-  static async generatePasskeyAuthenticationOptions(user?: IUser) {
+  static async generatePasskeyAuthenticationOptions(user?: IUser, host?: string) {
     let allowCredentials: any[] = [];
     if (user) {
       const creds = await CredentialModel.find({ userId: user._id, type: "PASSKEY" });
@@ -231,8 +237,10 @@ export class AuthService {
       }));
     }
 
+    const cleanHost = (host || new URL(env.FRONTEND_URL || "http://localhost:3000").hostname).split(":")[0];
+
     const options = await generateAuthenticationOptions({
-      rpID: new URL(env.FRONTEND_URL || "http://localhost:3000").hostname,
+      rpID: cleanHost,
       allowCredentials,
       userVerification: "preferred",
     });
@@ -244,9 +252,13 @@ export class AuthService {
     user: IUser,
     response: AuthenticationResponseJSON,
     expectedChallenge: string,
+    host?: string,
   ) {
-    const expectedOrigin = env.FRONTEND_URL || "http://localhost:3000";
-    const expectedRPID = new URL(expectedOrigin).hostname;
+    const cleanHost = (host || new URL(env.FRONTEND_URL || "http://localhost:3000").hostname).split(":")[0];
+    const expectedOrigin = host
+      ? (host.includes("localhost") ? `http://${host}` : `https://${cleanHost}`)
+      : (env.FRONTEND_URL || "http://localhost:3000");
+    const expectedRPID = cleanHost;
 
     const cred = await CredentialModel.findOne({
       userId: user._id,

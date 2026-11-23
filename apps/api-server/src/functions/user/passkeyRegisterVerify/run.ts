@@ -23,7 +23,8 @@ export const run = async (
     throw new Error("Passkey registration challenge expired. Please retry.");
   }
 
-  const verification = await AuthService.verifyPasskeyRegistration(user, input.response, challenge);
+  const host = (context.req?.headers?.host as string) || undefined;
+  const verification = await AuthService.verifyPasskeyRegistration(user, input.response, challenge, host);
   if (!verification.verified) {
     throw new Error("Passkey verification failed.");
   }

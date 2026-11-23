@@ -9,7 +9,7 @@ type Output = Static<typeof outputSchema>;
 
 export const run = async (
   input: Input,
-  _context: MiddlewareContext,
+  context: MiddlewareContext,
 ): Promise<Output> => {
   const challenge = AuthService.getChallenge(`auth:${input.challengeId}`);
   if (!challenge) {
@@ -29,7 +29,8 @@ export const run = async (
     throw new Error("User associated with this Passkey not found.");
   }
 
-  const verification = await AuthService.verifyPasskeyAuthentication(user, input.response, challenge);
+  const host = (context.req?.headers?.host as string) || undefined;
+  const verification = await AuthService.verifyPasskeyAuthentication(user, input.response, challenge, host);
   if (!verification.verified) {
     throw new Error("Passkey authentication failed.");
   }

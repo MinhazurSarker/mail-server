@@ -9,14 +9,15 @@ type Output = Static<typeof outputSchema>;
 
 export const run = async (
   input: Input,
-  _context: MiddlewareContext,
+  context: MiddlewareContext,
 ): Promise<Output> => {
   let user = null;
   if (input.email) {
     user = await UserService.getByEmail(input.email);
   }
 
-  const options = await AuthService.generatePasskeyAuthenticationOptions(user || undefined);
+  const host = (context.req?.headers?.host as string) || undefined;
+  const options = await AuthService.generatePasskeyAuthenticationOptions(user || undefined, host);
   const challengeId = crypto.randomUUID();
   AuthService.setChallenge(`auth:${challengeId}`, options.challenge);
 

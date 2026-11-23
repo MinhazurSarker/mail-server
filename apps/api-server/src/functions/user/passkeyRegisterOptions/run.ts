@@ -16,7 +16,8 @@ export const run = async (
   const user = await UserService.getById(authUser.userId);
   if (!user) throw new Error("User not found.");
 
-  const options = await AuthService.generatePasskeyRegistrationOptions(user);
+  const host = (context.req?.headers?.host as string) || undefined;
+  const options = await AuthService.generatePasskeyRegistrationOptions(user, host);
   AuthService.setChallenge(`reg:${authUser.userId}`, options.challenge);
   return options;
 };
