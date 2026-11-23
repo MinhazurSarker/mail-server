@@ -24,6 +24,8 @@ RUN pnpm install --frozen-lockfile
 # Source builder layer
 FROM dependencies AS builder
 COPY . .
+ENV NODE_ENV=production
+ENV INTERNAL_API_URL=http://api_server:4000
 RUN pnpm run build --force
 
 # --------------------------------------------------------------------
@@ -63,4 +65,5 @@ WORKDIR /app
 COPY --from=builder /app /app
 EXPOSE 3000
 ENV NODE_ENV=production
+ENV INTERNAL_API_URL=http://api_server:4000
 CMD ["node", "apps/web/node_modules/next/dist/bin/next", "start", "apps/web", "-p", "3000"]

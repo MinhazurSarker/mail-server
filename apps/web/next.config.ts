@@ -8,10 +8,16 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@cellsinbox/schema", "@cellsweb/rpc-client"],
   outputFileTracingRoot: path.resolve(__dirname, "../../"),
   async rewrites() {
-    const backendUrl = process.env.INTERNAL_API_URL || "http://localhost:4000";
+    const backendUrl =
+      process.env.INTERNAL_API_URL ||
+      (process.env.NODE_ENV === "production" ? "http://api_server:4000" : "http://localhost:4000");
     return [
       {
         source: "/rpc",
+        destination: `${backendUrl}/rpc`,
+      },
+      {
+        source: "/api/rpc",
         destination: `${backendUrl}/rpc`,
       },
       {
