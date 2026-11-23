@@ -10,3 +10,4 @@ export * from "./services/QueueService.js";
 export * from "./services/MtaService.js";
 export * from "./services/ContactService.js";
 export * from "./services/CalendarService.js";
+export * from "./seeder.js";

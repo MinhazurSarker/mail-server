@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, watch } from "node:fs";
 import { connectToDatabase } from "@cellsinbox/db";
 import { env } from "@cellsinbox/env";
+import { seedPrimaryTenantIfMissing } from "@cellsinbox/service";
 import { createSmtpServer } from "./server.js";
 
 const PORT = env.SMTP_PORT || 2525;
@@ -9,6 +10,13 @@ const HOST = env.SMTP_HOST || "0.0.0.0";
 async function bootstrap() {
   await connectToDatabase();
   console.log("[SMTP Server] Connected to MongoDB.");
+
+  try {
+    await seedPrimaryTenantIfMissing();
+    console.log("[SMTP Server] Primary tenant and verified domain verified in database.");
+  } catch (seedErr) {
+    console.error("[SMTP Server] Seeding error:", seedErr);
+  }
 
   let key: Buffer | undefined;
   let cert: Buffer | undefined;

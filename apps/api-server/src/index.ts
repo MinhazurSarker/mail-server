@@ -5,7 +5,7 @@ import { CoreRPC } from "@cellsweb/rpc-core";
 import { FormatRegistry } from "@sinclair/typebox";
 import { WebSocketServer, WebSocket } from "ws";
 import { connectToDatabase } from "@cellsinbox/db";
-import { AuthService, MailEvents, ApiKeyService } from "@cellsinbox/service";
+import { AuthService, MailEvents, ApiKeyService, seedPrimaryTenantIfMissing } from "@cellsinbox/service";
 import { env } from "./env.js";
 
 if (!FormatRegistry.Has("email")) {
@@ -22,6 +22,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 async function main() {
   await connectToDatabase();
   console.log("[API Server] Connected to MongoDB.");
+
+  try {
+    await seedPrimaryTenantIfMissing();
+    console.log("[API Server] Primary tenant and verified domain verified in database.");
+  } catch (seedErr) {
+    console.error("[API Server] Seeding error:", seedErr);
+  }
 
   const app = new CoreRPC({
     functionsDir: path.join(__dirname, "functions"),

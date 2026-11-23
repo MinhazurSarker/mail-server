@@ -71,5 +71,13 @@ export function createSmtpServer(options: SmtpReceiverOptions = {}): SMTPServer 
     },
   });
 
+  server.on("error", (err: any) => {
+    console.error("[SMTP Server Socket Error]:", err?.message || err);
+  });
+
+  server.on("clientError", (err: any) => {
+    console.warn("[SMTP Server Client Error]:", err?.message || err);
+  });
+
   return server;
 }

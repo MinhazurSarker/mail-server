@@ -63,4 +63,4 @@ WORKDIR /app
 COPY --from=builder /app /app
 EXPOSE 3000
 ENV NODE_ENV=production
-CMD ["pnpm", "--filter", "@cellsinbox/web", "run", "start"]
+CMD ["node", "apps/web/node_modules/next/dist/bin/next", "start", "apps/web", "-p", "3000"]
