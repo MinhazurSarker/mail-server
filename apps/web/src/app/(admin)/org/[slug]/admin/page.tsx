@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback, useMemo, useId } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import AppLayout from "@/layout/app-layout";
 import PageBreadcrumb from "@/components/common/page-breadcrumb";
 import MetricCard from "@/components/common/metric-card";
 import { rpcCall } from "@/lib/api";
@@ -469,7 +468,7 @@ export default function TenantAdminPage() {
   };
 
   return (
-    <AppLayout>
+    <div className="w-full min-w-0">
       {/* Toast */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 rounded-xl bg-gray-900 px-4 py-2.5 text-xs font-medium text-white shadow-theme-xl dark:bg-white dark:text-gray-900 animate-in fade-in">
@@ -1042,10 +1041,12 @@ export default function TenantAdminPage() {
                     Connect domains with automated 2048-bit DKIM keys and SPF verification.
                   </p>
                 </div>
-                <Button size="sm" onClick={() => setShowAddDomain(true)} className="gap-1.5 text-xs">
-                  <Plus className="size-3.5" />
-                  Add Domain
-                </Button>
+                <Link href="/domains/new">
+                  <Button size="sm" className="gap-1.5 text-xs">
+                    <Plus className="size-3.5" />
+                    Add Domain
+                  </Button>
+                </Link>
               </div>
 
               <Card className="border-border/60 overflow-hidden">
@@ -1061,16 +1062,25 @@ export default function TenantAdminPage() {
                   <TableBody>
                     {domains.map((dom) => (
                       <TableRow key={dom.id}>
-                        <TableCell className="font-mono font-medium text-sm">{dom.name}</TableCell>
+                        <TableCell className="font-mono font-medium text-sm">
+                          <Link href={`/domains/${dom.id}`} className="hover:underline text-brand-600 dark:text-brand-400">
+                            {dom.name}
+                          </Link>
+                        </TableCell>
                         <TableCell>
                           <Badge variant={dom.isVerified ? "default" : "outline"} className="text-xs">
                             {dom.isVerified ? "VERIFIED" : "PENDING DNS"}
                           </Badge>
                         </TableCell>
                         <TableCell className="font-mono text-xs">{dom.dkimSelector}</TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right space-x-2">
+                          <Link href={`/domains/${dom.id}`}>
+                            <Button variant="outline" size="sm" className="text-xs">
+                              Configure DNS & BIND
+                            </Button>
+                          </Link>
                           <Button
-                            variant="outline"
+                            variant="secondary"
                             size="sm"
                             className="text-xs"
                             onClick={() => handleVerifyDomain(dom.id)}
@@ -1103,10 +1113,12 @@ export default function TenantAdminPage() {
                     Manage mailboxes, storage consumption, and security status.
                   </p>
                 </div>
-                <Button size="sm" onClick={() => setShowAddUser(true)} className="gap-1.5 text-xs">
-                  <Plus className="size-3.5" />
-                  Add User
-                </Button>
+                <Link href="/users/new">
+                  <Button size="sm" className="gap-1.5 text-xs">
+                    <Plus className="size-3.5" />
+                    New User
+                  </Button>
+                </Link>
               </div>
 
               <Card className="border-border/60 overflow-hidden">
@@ -1118,13 +1130,16 @@ export default function TenantAdminPage() {
                       <TableHead>Storage Quota</TableHead>
                       <TableHead>2FA Enforced</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {users.map((u) => (
                       <TableRow key={u.id}>
                         <TableCell className="font-medium text-sm">
-                          <div>{u.email}</div>
+                          <Link href={`/users/${u.id}`} className="hover:underline text-brand-600 dark:text-brand-400">
+                            {u.email}
+                          </Link>
                           {u.displayName && <div className="text-xs text-muted-foreground">{u.displayName}</div>}
                         </TableCell>
                         <TableCell>
@@ -1147,6 +1162,13 @@ export default function TenantAdminPage() {
                           >
                             {u.status}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Link href={`/users/${u.id}`}>
+                            <Button variant="outline" size="sm" className="text-xs">
+                              Manage User
+                            </Button>
+                          </Link>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1674,6 +1696,6 @@ export default function TenantAdminPage() {
           </Card>
         </div>
       )}
-    </AppLayout>
+    </div>
   );
 }

@@ -1,0 +1,66 @@
+import {
+  DownloadIcon,
+  FileIcon,
+  FolderIcon,
+  LayoutGridIcon,
+  MusicIcon,
+  PlayIcon,
+} from "@/icons";
+import { MediaItem } from "./types";
+
+export const defaultMediaItems: MediaItem[] = [
+  {
+    id: "images",
+    icon: <FolderIcon className="size-6" />,
+    title: "Image",
+    usage: "17% Used",
+    fileCount: 245,
+    storageUsed: "26.40 GB",
+    iconStyle: "bg-green-500/[0.08] text-green-500",
+  },
+  {
+    id: "videos",
+    icon: <PlayIcon className="size-6" />,
+    title: "Videos",
+    usage: "22% Used",
+    fileCount: 245,
+    storageUsed: "26.40 GB",
+    iconStyle: "bg-sky-500/[0.08] text-sky-500 fill-transparent",
+  },
+  {
+    id: "audios",
+    icon: <MusicIcon className="size-6" />,
+    title: "Audios",
+    usage: "23% Used",
+    fileCount: 830,
+    storageUsed: "18.90 GB",
+    iconStyle: "bg-blue-500/[0.08] text-blue-500",
+  },
+  {
+    id: "apps",
+    icon: <LayoutGridIcon className="size-6" />,
+    title: "Apps",
+    usage: "65% Used",
+    fileCount: 1200,
+    storageUsed: "85.30 GB",
+    iconStyle: "bg-orange-500/[0.08] text-orange-500",
+  },
+  {
+    id: "documents",
+    icon: <FileIcon className="size-6" />,
+    title: "Documents",
+    usage: "10% Used",
+    fileCount: 78,
+    storageUsed: "5.40 GB",
+    iconStyle: "bg-amber-500/[0.08] text-amber-500",
+  },
+  {
+    id: "downloads",
+    icon: <DownloadIcon className="size-6" />,
+    title: "Downloads",
+    usage: "16% Used",
+    fileCount: 245,
+    storageUsed: "26.40 GB",
+    iconStyle: "bg-purple-500/[0.08] text-purple-500",
+  },
+];

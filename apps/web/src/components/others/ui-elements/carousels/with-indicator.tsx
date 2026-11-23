@@ -1,0 +1,55 @@
+"use client";
+
+import Image from "next/image";
+import { Autoplay, Pagination } from "swiper/modules";
+import { Swiper, SwiperSlide } from "swiper/react";
+const carouselData = [
+  {
+    thumbnail: "/images/carousel/carousel-01.png",
+  },
+  {
+    thumbnail: "/images/carousel/carousel-03.png",
+  },
+  {
+    thumbnail: "/images/carousel/carousel-02.png",
+  },
+  {
+    thumbnail: "/images/carousel/carousel-04.png",
+  },
+];
+
+export default function WithIndicators() {
+  const swiperOptions = {
+    modules: [Pagination, Autoplay],
+    autoplay: {
+      delay: 5000,
+      disableOnInteraction: false,
+    },
+    pagination: {
+      el: ".swiper-pagination",
+      clickable: true,
+    },
+  };
+
+  return (
+    <div className="carouselThree relative rounded-lg border border-gray-200 dark:border-gray-800">
+      <Swiper {...swiperOptions}>
+        {carouselData.map((item, i) => (
+          <SwiperSlide key={i + 1}>
+            <div className="overflow-hidden rounded-lg">
+              <Image
+                width={487}
+                height={297}
+                src={item.thumbnail}
+                className="w-full rounded-lg"
+                alt="carousel"
+              />
+            </div>
+          </SwiperSlide>
+        ))}
+
+        <div className="swiper-pagination"></div>
+      </Swiper>
+    </div>
+  );
+}

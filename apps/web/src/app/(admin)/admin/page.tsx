@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import AppLayout from "@/layout/app-layout";
 import PageBreadcrumb from "@/components/common/page-breadcrumb";
 import MetricCard from "@/components/common/metric-card";
 import { rpcCall } from "@/lib/api";
@@ -159,7 +158,7 @@ export default function PlatformAdminPage() {
   };
 
   return (
-    <AppLayout>
+    <div className="w-full min-w-0">
       {/* Toast */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 rounded-xl bg-gray-900 px-4 py-2.5 text-xs font-medium text-white shadow-theme-xl dark:bg-white dark:text-gray-900 animate-in fade-in">
@@ -492,6 +491,6 @@ export default function PlatformAdminPage() {
           )}
         </DialogContent>
       </Dialog>
-    </AppLayout>
+    </div>
   );
 }

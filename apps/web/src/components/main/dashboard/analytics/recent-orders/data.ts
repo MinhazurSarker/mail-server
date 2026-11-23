@@ -1,0 +1,60 @@
+import { AnalyticsOrder } from "./types";
+
+export const recentOrdersData: AnalyticsOrder[] = [
+  {
+    id: 1,
+    name: "TailGrids",
+    category: "uiKits",
+    country: "/images/flag/usa.png",
+    cr: "Dashboard",
+    value: "12,499",
+  },
+  {
+    id: 2,
+    name: "GrayGrids",
+    category: "templates",
+    country: "/images/flag/yemen.png",
+    cr: "Dashboard",
+    value: "5498",
+  },
+  {
+    id: 3,
+    name: "Uideck",
+    category: "templates",
+    country: "/images/flag/sudan.png",
+    cr: "Dashboard",
+    value: "4621",
+  },
+  {
+    id: 4,
+    name: "FormBold",
+    category: "saas",
+    country: "/images/flag/bangladesh.png",
+    cr: "Dashboard",
+    value: "13843",
+  },
+  {
+    id: 5,
+    name: "NextAdmin",
+    category: "templates",
+    country: "/images/flag/switzerland.png",
+    cr: "Dashboard",
+    value: "7523",
+  },
+  {
+    id: 6,
+    name: "Form Builder",
+    category: "templates",
+    country: "/images/flag/norway.png",
+    cr: "Dashboard",
+    value: "1,377",
+  },
+  {
+    id: 7,
+    name: "AyroUI",
+    category: "templates",
+    country: "/images/flag/france.png",
+    cr: "Dashboard",
+    value: "599,00",
+  },
+];

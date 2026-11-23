@@ -1,6 +1,7 @@
 import {
   CalendarIcon,
   GearIcon,
+  GlobeIcon,
   LayoutGridIcon,
   MailIcon,
   PageIcon,
@@ -38,6 +39,18 @@ export const navItems: NavItem[] = [
 ];
 
 export const supportItems: NavItem[] = [
+  {
+    icon: <GlobeIcon className="size-6 stroke-[1.5px]" />,
+    key: "domains",
+    name: "Domains & DNS",
+    path: "/domains",
+  },
+  {
+    icon: <UsersIcon className="size-6 stroke-[1.5px]" />,
+    key: "users",
+    name: "Users & Mailboxes",
+    path: "/users",
+  },
   {
     icon: <TableIcon className="size-6 stroke-[1.5px]" />,
     key: "tenantAdmin",

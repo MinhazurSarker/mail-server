@@ -5,9 +5,11 @@ export interface StoredAccount {
   email: string;
   displayName?: string;
   role: string;
+  organizationId?: string;
   orgSlug?: string;
   orgName?: string;
   token: string;
+  isActive?: boolean;
   avatarColor?: string;
   lastActive?: number;
 }
