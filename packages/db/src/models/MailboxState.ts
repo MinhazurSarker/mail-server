@@ -31,6 +31,6 @@ const MailboxStateSchema = new Schema<IMailboxState>(
 );
 
 MailboxStateSchema.index({ userId: 1, folder: 1, createdAt: -1 });
-MailboxStateSchema.index({ userId: 1, messageId: 1 }, { unique: true });
+MailboxStateSchema.index({ userId: 1, messageId: 1, folder: 1 }, { unique: true });
 
 export const MailboxStateModel = model<IMailboxState>("MailboxState", MailboxStateSchema);
