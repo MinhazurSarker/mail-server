@@ -1,0 +1,34 @@
+{
+  "name": "@cellsinbox/service",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b -w",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.758.0",
+    "@aws-sdk/s3-request-presigner": "^3.758.0",
+    "@cellsinbox/db": "workspace:*",
+    "@cellsinbox/env": "workspace:*",
+    "@cellsinbox/schema": "workspace:*",
+    "@simplewebauthn/server": "^13.1.1",
+    "argon2": "^0.41.1",
+    "jose": "^6.2.18",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^10.6.1",
+    "otplib": "^12.0.1"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.5",
+    "@types/node": "^22.13.10",
+    "@types/nodemailer": "^8.0.2",
+    "@types/smtp-server": "^3.5.13",
+    "smtp-server": "^3.21.7",
+    "typescript": "^5.8.2"
+  }
+}

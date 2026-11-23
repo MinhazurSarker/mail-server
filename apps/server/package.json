@@ -1,0 +1,27 @@
+{
+  "name": "@cellsinbox/server",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b -w",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@cellsinbox/db": "workspace:*",
+    "@cellsinbox/env": "workspace:*",
+    "@cellsinbox/schema": "workspace:*",
+    "@cellsinbox/service": "workspace:*",
+    "smtp-server": "^3.13.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/nodemailer": "^6.4.24",
+    "@types/smtp-server": "^3.5.10",
+    "nodemailer": "^6.10.1",
+    "typescript": "^5.8.2"
+  }
+}

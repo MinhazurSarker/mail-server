@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+.turbo/
+.next/
+.env
+.env.local
+.env.*.local
+*.tsbuildinfo
+*.log
+.DS_Store
+.mcp.jsonstorage/
+
+/storage
+storage/
+

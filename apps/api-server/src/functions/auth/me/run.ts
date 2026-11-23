@@ -1,0 +1,26 @@
+import type { Static } from "@sinclair/typebox";
+import type { MiddlewareContext } from "@cellsweb/rpc-core";
+import type { AuthContext } from "../../../middlewares/auth/run.js";
+import type { inputSchema, outputSchema } from "./constants.js";
+
+type Input = Static<typeof inputSchema>;
+type Output = Static<typeof outputSchema>;
+
+export const run = async (
+  _input: Input,
+  context: MiddlewareContext & { auth?: AuthContext },
+): Promise<Output> => {
+  const authUser = context.auth;
+  if (!authUser) {
+    throw new Error("Unauthorized: No authenticated user session found in context.");
+  }
+
+  return {
+    userId: authUser.userId,
+    organizationId: authUser.organizationId,
+    domainId: authUser.domainId || "",
+    email: authUser.email,
+    role: authUser.role,
+    status: authUser.status,
+  };
+};
