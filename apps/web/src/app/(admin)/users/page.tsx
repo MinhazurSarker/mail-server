@@ -122,7 +122,8 @@ export default function UsersListPage() {
       (u.displayName && u.displayName.toLowerCase().includes(searchParamQuery.toLowerCase()));
     const matchesRole =
       filterRole === "all" ||
-      u.role.toUpperCase() === filterRole.toUpperCase();
+      (filterRole === "admin" && (u.role === "ORG_ADMIN" || u.role === "PLATFORM_ADMIN" || u.role === "ADMIN")) ||
+      (filterRole === "member" && (u.role === "MAILBOX_USER" || u.role === "MEMBER"));
     return matchesSearch && matchesRole;
   });
 

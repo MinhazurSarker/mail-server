@@ -17,10 +17,11 @@ export default function ContactDetailPage({
 
   useEffect(() => {
     let isMounted = true;
-    rpcCall<{ contacts: ContactData[] }>("contacts", "list", { limit: 100 })
+    rpcCall<any>("contacts", "list", { limit: 100 })
       .then((res) => {
         if (!isMounted) return;
-        const found = (res.contacts || []).find((c) => c.id === id);
+        const list = res?.items || res?.contacts || [];
+        const found = list.find((c: any) => c.id === id || c._id === id);
         if (found) {
           setData(found);
         } else {

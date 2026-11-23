@@ -201,7 +201,7 @@ function Sidebar({
       <div
         data-slot="sidebar"
         className={cn(
-          "flex h-full w-(--sidebar-width) flex-col border-e border-gray-200 bg-white text-gray-900 dark:border-gray-800 dark:bg-gray-900",
+          "flex h-full w-[var(--sidebar-width)] flex-col border-e border-gray-200 bg-white text-gray-900 dark:border-gray-800 dark:bg-gray-900",
           className,
         )}
         {...props}
@@ -219,7 +219,7 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="w-(--sidebar-width) border-e border-gray-200 bg-white p-0 text-gray-900 dark:border-gray-800 dark:bg-gray-900 [&>button]:hidden"
+          className="w-[var(--sidebar-width)] border-e border-gray-200 bg-white p-0 text-gray-900 dark:border-gray-800 dark:bg-gray-900 [&>button]:hidden"
           style={
             {
               "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
@@ -251,23 +251,23 @@ function Sidebar({
       <div
         data-slot="sidebar-gap"
         className={cn(
-          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-300 ease-in-out",
+          "relative w-[var(--sidebar-width)] bg-transparent transition-[width] duration-300 ease-in-out",
           "group-data-[collapsible=offcanvas]/sidebar:w-0",
           "group-data-[side=right]/sidebar:rotate-180",
           variant === "floating" || variant === "inset"
             ? "group-data-[collapsible=icon]/sidebar:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
-            : "group-data-[collapsible=icon]/sidebar:w-(--sidebar-width-icon)",
+            : "group-data-[collapsible=icon]/sidebar:w-[var(--sidebar-width-icon)]",
         )}
       />
       <div
         data-slot="sidebar-container"
         data-side={side}
         className={cn(
-          "fixed inset-y-0 z-50 hidden h-svh w-(--sidebar-width) transition-[inset,width] duration-300 ease-in-out data-[side=left]:inset-s-0 data-[side=left]:group-data-[collapsible=offcanvas]/sidebar:-inset-s-(--sidebar-width) data-[side=right]:inset-e-0 data-[side=right]:group-data-[collapsible=offcanvas]/sidebar:-inset-e-(--sidebar-width) xl:flex",
+          "fixed inset-y-0 z-50 hidden h-svh w-[var(--sidebar-width)] transition-[inset,width] duration-300 ease-in-out data-[side=left]:inset-s-0 data-[side=left]:group-data-[collapsible=offcanvas]/sidebar:-inset-s-(--sidebar-width) data-[side=right]:inset-e-0 data-[side=right]:group-data-[collapsible=offcanvas]/sidebar:-inset-e-(--sidebar-width) xl:flex",
           // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]/sidebar:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
-            : "border-gray-200 group-data-[collapsible=icon]/sidebar:w-(--sidebar-width-icon) group-data-[side=left]/sidebar:border-e group-data-[side=right]/sidebar:border-s dark:border-gray-800",
+            : "border-gray-200 group-data-[collapsible=icon]/sidebar:w-[var(--sidebar-width-icon)] group-data-[side=left]/sidebar:border-e group-data-[side=right]/sidebar:border-s dark:border-gray-800",
           className,
         )}
         onMouseEnter={() => {

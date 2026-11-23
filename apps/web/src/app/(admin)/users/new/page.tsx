@@ -24,7 +24,7 @@ export default function NewUserPage() {
   const [username, setUsername] = useState("");
   const [selectedDomainId, setSelectedDomainId] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [role, setRole] = useState("MEMBER");
+  const [role, setRole] = useState("MAILBOX_USER");
   const [quotaGb, setQuotaGb] = useState("10");
 
   const [submitting, setSubmitting] = useState(false);
@@ -271,8 +271,8 @@ export default function NewUserPage() {
                   onChange={(e) => setRole(e.target.value)}
                   className="w-full h-10 rounded-xl border border-gray-200 bg-white px-3 text-xs font-medium text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
                 >
-                  <option value="MEMBER">Standard Member (Mailbox User)</option>
-                  <option value="ADMIN">Tenant Administrator (Full Org Access)</option>
+                  <option value="MAILBOX_USER">Standard Member (Mailbox User)</option>
+                  <option value="ORG_ADMIN">Tenant Administrator (Full Org Access)</option>
                 </select>
                 <p className="text-[11px] text-gray-500">
                   Admins can manage organization settings, domains, and other users.

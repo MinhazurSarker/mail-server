@@ -28,9 +28,8 @@ export default function NewDomainPage() {
 
     setSubmitting(true);
     try {
-      const res = await rpcCall<any>("domain", "create", {
+      const res = await rpcCall<any>("admin", "domainAdd", {
         name: domainName.trim().toLowerCase(),
-        dkimSelector: dkimSelector.trim() || "ci",
       });
       const createdId = res?.domain?.id || res?.id || res?.domain?._id;
       if (createdId) {

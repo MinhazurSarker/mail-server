@@ -96,7 +96,7 @@ export default function ContactsPage() {
   const loadContacts = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await rpcCall<{ contacts: ContactItem[]; total: number }>(
+      const res = await rpcCall<any>(
         "contacts",
         "list",
         {
@@ -106,8 +106,9 @@ export default function ContactsPage() {
           limit: 20,
         }
       );
-      setContacts(res.contacts || []);
-      setTotal(res.total || 0);
+      const items = res?.items || res?.contacts || [];
+      setContacts(items);
+      setTotal(res?.total !== undefined ? res.total : items.length);
     } catch (err: any) {
       console.error("Failed to load contacts:", err);
     } finally {

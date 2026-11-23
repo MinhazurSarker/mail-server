@@ -174,8 +174,8 @@ export default function UserEditComponent({ data: initialData }: UserEditCompone
                 onChange={(e) => setRole(e.target.value)}
                 className="w-full h-10 rounded-xl border border-gray-200 bg-white px-3 text-xs font-medium text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
               >
-                <option value="MEMBER">Standard Member</option>
-                <option value="ADMIN">Tenant Administrator</option>
+                <option value="MAILBOX_USER">Standard Member (Mailbox User)</option>
+                <option value="ORG_ADMIN">Tenant Administrator</option>
               </select>
             </div>
 
