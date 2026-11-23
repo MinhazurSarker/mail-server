@@ -6,8 +6,6 @@ services:
     image: mongo:7.0
     container_name: cellsinbox_mongo
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:27017:27017"
     environment:
       MONGO_INITDB_DATABASE: cellsinbox
     volumes:
@@ -37,11 +35,11 @@ services:
       - MONGODB_URI=mongodb://mongodb:27017/cellsinbox
       - SMTP_HOST=0.0.0.0
       - SMTP_PORT=25
-      - MAIL_HELO_HOST=${MAIL_HELO_HOST:-mail.yourdomain.com}
-      - SMTP_TLS_KEY_PATH=/etc/letsencrypt/live/${MAIL_HELO_HOST:-mail.yourdomain.com}/privkey.pem
-      - SMTP_TLS_CERT_PATH=/etc/letsencrypt/live/${MAIL_HELO_HOST:-mail.yourdomain.com}/fullchain.pem
+      - MAIL_HELO_HOST=${MAIL_HELO_HOST:-mail.cellsweb.com}
+      - SMTP_TLS_KEY_PATH=${SMTP_TLS_KEY_PATH:-/etc/dokploy/shared-certs/private/mail.cellsweb.com.key}
+      - SMTP_TLS_CERT_PATH=${SMTP_TLS_CERT_PATH:-/etc/dokploy/shared-certs/certs/mail.cellsweb.com.crt}
     volumes:
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /etc/dokploy/shared-certs:/etc/dokploy/shared-certs:ro
     depends_on:
       mongodb:
         condition: service_healthy
@@ -58,21 +56,20 @@ services:
       target: api-server
     container_name: cellsinbox_api
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:4000:4000"
     environment:
       - NODE_ENV=production
       - MONGODB_URI=mongodb://mongodb:27017/cellsinbox
       - API_HOST=0.0.0.0
       - API_PORT=4000
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - JWT_SECRET=${JWT_SECRET:-sovereign_secret_key_cellsweb_2026_super_secure}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-sovereign_refresh_secret_cellsweb_2026_super_secure}
+      - FRONTEND_URL=${FRONTEND_URL:-https://webmail.cellsweb.com}
     depends_on:
       mongodb:
         condition: service_healthy
     networks:
       - cellsinbox_net
+      - dokploy-network
 
   # ====================================================================
   # Outbound Delivery MTA & Background Queue Worker
@@ -87,7 +84,7 @@ services:
     environment:
       - NODE_ENV=production
       - MONGODB_URI=mongodb://mongodb:27017/cellsinbox
-      - MAIL_HELO_HOST=${MAIL_HELO_HOST:-mail.yourdomain.com}
+      - MAIL_HELO_HOST=${MAIL_HELO_HOST:-mail.cellsweb.com}
       - QUEUE_POLL_INTERVAL_MS=3000
     depends_on:
       mongodb:
@@ -105,21 +102,22 @@ services:
       target: web
     container_name: cellsinbox_web
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:4000}
-      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:4000/ws}
+      - INTERNAL_API_URL=http://api_server:4000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://webmail.cellsweb.com}
     depends_on:
       - api_server
     networks:
       - cellsinbox_net
+      - dokploy-network
 
 networks:
   cellsinbox_net:
     driver: bridge
+  dokploy-network:
+    external: true
 
 volumes:
   mongo_data:

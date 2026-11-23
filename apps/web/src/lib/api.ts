@@ -1,6 +1,9 @@
 import { createRpcClient } from "@cellsweb/rpc-client";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+export const API_BASE_URL =
+  typeof window !== "undefined"
+    ? window.location.origin
+    : (process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000");
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/i, "ws");
 
 export const rpc = createRpcClient({
