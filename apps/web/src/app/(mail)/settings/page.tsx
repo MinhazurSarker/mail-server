@@ -4,9 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { rpcCall } from "@/lib/api";
-import { Switch, SwitchThumb } from "@ui-sdk/react/switch";
-import { Field, FieldLabel, FieldDescription } from "@ui-sdk/react/field";
-import { useShortcut, useShortcutHint } from "@ui-sdk/react/shortcuts";
+import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,7 +77,7 @@ export default function UserSettingsPage() {
   };
 
   // Shortcut hint for Save
-  const saveHint = useShortcutHint("mod+s");
+  const saveHint = "⌘S";
 
   const loadSettings = useCallback(async () => {
     try {
@@ -136,9 +134,16 @@ export default function UserSettingsPage() {
   };
 
   // Keyboard shortcut: Cmd+S / Ctrl+S saves settings
-  useShortcut("mod+s", () => {
-    handleSavePreferences();
-  }, { description: "Save preferences" });
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        handleSavePreferences();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [autoSaveDrafts, sendReadReceipts, desktopNotifications, defaultFormat, signature, displayName]);
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -210,7 +215,7 @@ export default function UserSettingsPage() {
           <Save className="size-3.5" />
           {saving ? "Saving..." : "Save Preferences"}
           <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 rounded bg-primary-foreground/20 text-[10px] font-mono">
-            {saveHint.text}
+            {saveHint}
           </kbd>
         </Button>
       </header>
@@ -324,85 +329,77 @@ export default function UserSettingsPage() {
                   Client Behavior Preferences
                 </CardTitle>
                 <CardDescription>
-                  Configure automated drafting, receipt dispatch, and formatting powered by ui-sdk behavioral primitives.
+                  Configure automated drafting, receipt dispatch, and formatting for webmail.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-5">
-                {/* ui-sdk Field + Switch: Auto-save drafts */}
-                <Field className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/20">
+              <CardContent className="space-y-4">
+                {/* Auto-save drafts */}
+                <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card/50 hover:bg-muted/10 transition-colors">
                   <div className="space-y-0.5">
-                    <FieldLabel className="text-xs font-semibold text-foreground cursor-pointer">
+                    <label htmlFor="auto-save" className="text-xs font-semibold text-foreground cursor-pointer">
                       Auto-Save Drafts
-                    </FieldLabel>
-                    <FieldDescription className="text-[11px] text-muted-foreground">
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
                       Periodically synchronize email composition buffers to prevent accidental loss.
-                    </FieldDescription>
+                    </p>
                   </div>
                   <Switch
+                    id="auto-save"
                     checked={autoSaveDrafts}
-                    onCheckedChange={(checked) => setAutoSaveDrafts(checked)}
-                    className="shrink-0 size-5 inline-flex items-center rounded-full bg-muted data-[checked]:bg-primary transition-colors p-0.5 cursor-pointer border border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <SwitchThumb className="block size-4 rounded-full bg-foreground data-[checked]:bg-primary-foreground transition-transform data-[checked]:translate-x-4" />
-                  </Switch>
-                </Field>
+                    onCheckedChange={(checked) => setAutoSaveDrafts(!!checked)}
+                  />
+                </div>
 
-                {/* ui-sdk Field + Switch: Read receipts */}
-                <Field className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/20">
+                {/* Read receipts */}
+                <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card/50 hover:bg-muted/10 transition-colors">
                   <div className="space-y-0.5">
-                    <FieldLabel className="text-xs font-semibold text-foreground cursor-pointer">
+                    <label htmlFor="read-receipts" className="text-xs font-semibold text-foreground cursor-pointer">
                       Send Read Receipts
-                    </FieldLabel>
-                    <FieldDescription className="text-[11px] text-muted-foreground">
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
                       Acknowledge RFC Disposition-Notification-To header requests when viewing messages.
-                    </FieldDescription>
+                    </p>
                   </div>
                   <Switch
+                    id="read-receipts"
                     checked={sendReadReceipts}
-                    onCheckedChange={(checked) => setSendReadReceipts(checked)}
-                    className="shrink-0 size-5 inline-flex items-center rounded-full bg-muted data-[checked]:bg-primary transition-colors p-0.5 cursor-pointer border border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <SwitchThumb className="block size-4 rounded-full bg-foreground data-[checked]:bg-primary-foreground transition-transform data-[checked]:translate-x-4" />
-                  </Switch>
-                </Field>
+                    onCheckedChange={(checked) => setSendReadReceipts(!!checked)}
+                  />
+                </div>
 
-                {/* ui-sdk Field + Switch: Desktop Notifications */}
-                <Field className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/20">
+                {/* Desktop Notifications */}
+                <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card/50 hover:bg-muted/10 transition-colors">
                   <div className="space-y-0.5">
-                    <FieldLabel className="text-xs font-semibold text-foreground cursor-pointer">
+                    <label htmlFor="desktop-notifications" className="text-xs font-semibold text-foreground cursor-pointer">
                       Real-Time Incoming Mail Alerts
-                    </FieldLabel>
-                    <FieldDescription className="text-[11px] text-muted-foreground">
-                      Show instant desktop toasts via WebSocket live sync when Port 25 receives new mail.
-                    </FieldDescription>
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Show instant desktop alerts when incoming messages arrive.
+                    </p>
                   </div>
                   <Switch
+                    id="desktop-notifications"
                     checked={desktopNotifications}
-                    onCheckedChange={(checked) => setDesktopNotifications(checked)}
-                    className="shrink-0 size-5 inline-flex items-center rounded-full bg-muted data-[checked]:bg-primary transition-colors p-0.5 cursor-pointer border border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <SwitchThumb className="block size-4 rounded-full bg-foreground data-[checked]:bg-primary-foreground transition-transform data-[checked]:translate-x-4" />
-                  </Switch>
-                </Field>
+                    onCheckedChange={(checked) => setDesktopNotifications(!!checked)}
+                  />
+                </div>
 
-                {/* ui-sdk Field + Switch: Default to Rich HTML */}
-                <Field className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/20">
+                {/* Default to Rich HTML */}
+                <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card/50 hover:bg-muted/10 transition-colors">
                   <div className="space-y-0.5">
-                    <FieldLabel className="text-xs font-semibold text-foreground cursor-pointer">
+                    <label htmlFor="rich-html" className="text-xs font-semibold text-foreground cursor-pointer">
                       Default to Rich HTML Format
-                    </FieldLabel>
-                    <FieldDescription className="text-[11px] text-muted-foreground">
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
                       Open composer in multi-part HTML mode rather than strict plain text.
-                    </FieldDescription>
+                    </p>
                   </div>
                   <Switch
+                    id="rich-html"
                     checked={defaultFormat === "html"}
                     onCheckedChange={(checked) => setDefaultFormat(checked ? "html" : "text")}
-                    className="shrink-0 size-5 inline-flex items-center rounded-full bg-muted data-[checked]:bg-primary transition-colors p-0.5 cursor-pointer border border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <SwitchThumb className="block size-4 rounded-full bg-foreground data-[checked]:bg-primary-foreground transition-transform data-[checked]:translate-x-4" />
-                  </Switch>
-                </Field>
+                  />
+                </div>
               </CardContent>
             </Card>
 

@@ -1,6 +1,5 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@layer ui-sdk;
 
 @tailwind base;
 @tailwind components;

@@ -4,9 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { rpcCall, API_BASE_URL } from "@/lib/api";
-import { Switch, SwitchThumb } from "@ui-sdk/react/switch";
-import { Field, FieldLabel, FieldDescription } from "@ui-sdk/react/field";
-import { useShortcut, useShortcutHint } from "@ui-sdk/react/shortcuts";
+import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -212,7 +210,7 @@ export default function AdminPage() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  const saveHint = useShortcutHint("mod+s");
+  const saveHint = "⌘S";
 
   const loadAllData = useCallback(async () => {
     try {
@@ -435,11 +433,18 @@ export default function AdminPage() {
     }
   };
 
-  useShortcut("mod+s", () => {
-    if (activeTab === "policies") {
-      handleSavePolicy();
-    }
-  }, { description: "Save policies" });
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        if (activeTab === "policies") {
+          e.preventDefault();
+          handleSavePolicy();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeTab, policyForm]);
 
   if (loading) {
     return (
@@ -1149,7 +1154,7 @@ print(response.status_code) # 202`}
                 <Save className="size-3.5" />
                 {savingPolicy ? "Saving..." : "Save Policies"}
                 <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 rounded bg-primary-foreground/20 text-[10px] font-mono">
-                  {saveHint.text}
+                  {saveHint}
                 </kbd>
               </Button>
             </div>
@@ -1164,63 +1169,57 @@ print(response.status_code) # 202`}
                   Protect tenant access across all employee accounts.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-5">
-                {/* ui-sdk Field + Switch: 2FA Enforcement */}
-                <Field className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/20">
+              <CardContent className="space-y-4">
+                {/* 2FA Enforcement */}
+                <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card/50 hover:bg-muted/10 transition-colors">
                   <div className="space-y-0.5">
-                    <FieldLabel className="text-xs font-semibold text-foreground cursor-pointer">
+                    <label htmlFor="enforce-2fa" className="text-xs font-semibold text-foreground cursor-pointer">
                       Mandatory Two-Factor (2FA) Onboarding
-                    </FieldLabel>
-                    <FieldDescription className="text-[11px] text-muted-foreground">
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
                       Require all new mailbox accounts to configure RFC 6238 TOTP authenticators before receiving or viewing email.
-                    </FieldDescription>
+                    </p>
                   </div>
                   <Switch
+                    id="enforce-2fa"
                     checked={policyForm.enforceTwoFactor}
-                    onCheckedChange={(checked) => setPolicyForm({ ...policyForm, enforceTwoFactor: checked })}
-                    className="shrink-0 size-5 inline-flex items-center rounded-full bg-muted data-[checked]:bg-primary transition-colors p-0.5 cursor-pointer border border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <SwitchThumb className="block size-4 rounded-full bg-foreground data-[checked]:bg-primary-foreground transition-transform data-[checked]:translate-x-4" />
-                  </Switch>
-                </Field>
+                    onCheckedChange={(checked) => setPolicyForm({ ...policyForm, enforceTwoFactor: !!checked })}
+                  />
+                </div>
 
-                {/* ui-sdk Field + Switch: Reject unverifiable SPF */}
-                <Field className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/20">
+                {/* Reject unverifiable SPF */}
+                <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card/50 hover:bg-muted/10 transition-colors">
                   <div className="space-y-0.5">
-                    <FieldLabel className="text-xs font-semibold text-foreground cursor-pointer">
+                    <label htmlFor="reject-spf" className="text-xs font-semibold text-foreground cursor-pointer">
                       Reject Inbound SPF Hard-Failures (-all)
-                    </FieldLabel>
-                    <FieldDescription className="text-[11px] text-muted-foreground">
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
                       Drop incoming connections immediately if connecting IP fails sender SPF check.
-                    </FieldDescription>
+                    </p>
                   </div>
                   <Switch
+                    id="reject-spf"
                     checked={policyForm.rejectUnverifiableSpf}
-                    onCheckedChange={(checked) => setPolicyForm({ ...policyForm, rejectUnverifiableSpf: checked })}
-                    className="shrink-0 size-5 inline-flex items-center rounded-full bg-muted data-[checked]:bg-primary transition-colors p-0.5 cursor-pointer border border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <SwitchThumb className="block size-4 rounded-full bg-foreground data-[checked]:bg-primary-foreground transition-transform data-[checked]:translate-x-4" />
-                  </Switch>
-                </Field>
+                    onCheckedChange={(checked) => setPolicyForm({ ...policyForm, rejectUnverifiableSpf: !!checked })}
+                  />
+                </div>
 
-                {/* ui-sdk Field + Switch: Reject unverifiable DKIM */}
-                <Field className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/20">
+                {/* Reject unverifiable DKIM */}
+                <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card/50 hover:bg-muted/10 transition-colors">
                   <div className="space-y-0.5">
-                    <FieldLabel className="text-xs font-semibold text-foreground cursor-pointer">
+                    <label htmlFor="reject-dkim" className="text-xs font-semibold text-foreground cursor-pointer">
                       Strict DKIM Signature Quarantine
-                    </FieldLabel>
-                    <FieldDescription className="text-[11px] text-muted-foreground">
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
                       Automatically flag incoming messages with broken or forged DKIM signatures to Junk folder.
-                    </FieldDescription>
+                    </p>
                   </div>
                   <Switch
+                    id="reject-dkim"
                     checked={policyForm.rejectUnverifiableDkim}
-                    onCheckedChange={(checked) => setPolicyForm({ ...policyForm, rejectUnverifiableDkim: checked })}
-                    className="shrink-0 size-5 inline-flex items-center rounded-full bg-muted data-[checked]:bg-primary transition-colors p-0.5 cursor-pointer border border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <SwitchThumb className="block size-4 rounded-full bg-foreground data-[checked]:bg-primary-foreground transition-transform data-[checked]:translate-x-4" />
-                  </Switch>
-                </Field>
+                    onCheckedChange={(checked) => setPolicyForm({ ...policyForm, rejectUnverifiableDkim: !!checked })}
+                  />
+                </div>
               </CardContent>
             </Card>
 
@@ -1536,24 +1535,22 @@ print(response.status_code) # 202`}
             </CardHeader>
             <form onSubmit={handleSaveSes}>
               <CardContent className="space-y-4">
-                {/* ui-sdk Field + Switch: SES Enable */}
-                <Field className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/20">
+                {/* SES Enable */}
+                <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card/50 hover:bg-muted/10 transition-colors">
                   <div className="space-y-0.5">
-                    <FieldLabel className="text-xs font-semibold text-foreground cursor-pointer">
+                    <label htmlFor="ses-enable" className="text-xs font-semibold text-foreground cursor-pointer">
                       Enable Automatic Amazon SES Outbound Failover
-                    </FieldLabel>
-                    <FieldDescription className="text-[11px] text-muted-foreground">
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
                       Automatically route queued emails through AWS SES if sovereign direct Port 25 delivery fails.
-                    </FieldDescription>
+                    </p>
                   </div>
                   <Switch
+                    id="ses-enable"
                     checked={sesForm.enabled}
-                    onCheckedChange={(checked) => setSesForm({ ...sesForm, enabled: checked })}
-                    className="shrink-0 size-5 inline-flex items-center rounded-full bg-muted data-[checked]:bg-primary transition-colors p-0.5 cursor-pointer border border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <SwitchThumb className="block size-4 rounded-full bg-foreground data-[checked]:bg-primary-foreground transition-transform data-[checked]:translate-x-4" />
-                  </Switch>
-                </Field>
+                    onCheckedChange={(checked) => setSesForm({ ...sesForm, enabled: !!checked })}
+                  />
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">

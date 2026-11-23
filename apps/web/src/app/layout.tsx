@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import "@ui-sdk/core/web.css";
 import "./globals.css";
 import { Geist, Inter } from "next/font/google";
 import { cn } from "@/lib/utils";
