@@ -24,7 +24,7 @@ RUN pnpm install --frozen-lockfile
 # Source builder layer
 FROM dependencies AS builder
 COPY . .
-RUN pnpm run build
+RUN pnpm run build --force
 
 # --------------------------------------------------------------------
 # 1. Inbound SMTP Daemon Target (Port 25)

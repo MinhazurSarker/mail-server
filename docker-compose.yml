@@ -102,6 +102,7 @@ services:
       target: web
     container_name: cellsinbox_web
     restart: unless-stopped
+    command: ["node", "apps/web/node_modules/next/dist/bin/next", "start", "apps/web", "-p", "3000"]
     environment:
       - NODE_ENV=production
       - PORT=3000
