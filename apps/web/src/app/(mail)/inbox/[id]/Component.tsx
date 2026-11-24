@@ -19,6 +19,7 @@ import {
   DownloadIcon,
   FileIcon,
   MailIcon,
+  RefreshIcon,
   SendIcon,
   TrashBinIcon,
   PaperClipIcon,
@@ -73,6 +74,9 @@ export default function EmailDetailComponent({
   const initial = (email.sender || email.email || "U")
     .charAt(0)
     .toUpperCase();
+  const hasVisibleHtml = Boolean(
+    email.html && email.html.replace(/<[^>]+>/g, "").trim().length > 0
+  );
   const hasHtml = Boolean(email.html);
   const hasRemoteImages = Boolean(
     email.html && /<img[^>]+src=["'](http|\/\/)/i.test(email.html)
@@ -141,14 +145,26 @@ export default function EmailDetailComponent({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <PageBreadcrumb pageTitle={email.subject || "(no subject)"} />
         <div className="flex items-center gap-2">
-          <Link href="/inbox">
-            <Button variant="outline" size="sm" className="gap-2">
-              <ArrowLeftIcon className="size-4" />
-              Back to Inbox
-            </Button>
-          </Link>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.back()}
+            className="gap-2 text-xs"
+          >
+            <ArrowLeftIcon className="size-4" />
+            Back
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => window.location.reload()}
+            className="gap-2 text-xs"
+          >
+            <RefreshIcon className="size-4" />
+            Refresh
+          </Button>
           <Link href={`/inbox/new?replyTo=${email.id || email._id}`}>
-            <Button size="sm" className="gap-2">
+            <Button size="sm" className="gap-2 text-xs">
               <Reply className="size-4" />
               Reply
             </Button>
@@ -157,7 +173,7 @@ export default function EmailDetailComponent({
             variant="destructive"
             size="sm"
             onClick={handleDelete}
-            className="gap-2"
+            className="gap-2 text-xs"
           >
             <TrashBinIcon className="size-4" />
             Delete
@@ -271,22 +287,22 @@ export default function EmailDetailComponent({
         )}
 
         {/* Message Body */}
-        <div className="min-h-[260px] text-sm leading-relaxed text-gray-800 dark:text-gray-200">
-          {format === "html" && email.html ? (
+        <div className="min-h-[260px] text-sm leading-relaxed text-gray-900 dark:text-gray-100 font-sans">
+          {format === "html" && hasVisibleHtml ? (
             <div
-              className="prose dark:prose-invert max-w-none [&_a]:text-brand-500 [&_a]:underline"
+              className="max-w-none text-gray-900 dark:text-gray-100 [&_a]:text-brand-500 [&_a]:underline font-sans leading-relaxed break-words"
               dangerouslySetInnerHTML={{
                 __html: loadRemoteImages
-                  ? email.html
-                  : email.html.replace(
+                  ? email.html!
+                  : email.html!.replace(
                       /<img([^>]+src=["'])(http|\/\/)([^"'>]+["'][^>]*)>/gi,
                       '<span class="inline-block p-1 bg-gray-100 dark:bg-gray-800 text-[10px] text-gray-400 rounded">[Blocked Image]</span>'
                     ),
               }}
             />
           ) : (
-            <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-gray-700 dark:text-gray-300">
-              {email.text || email.html?.replace(/<[^>]+>/g, " ") || "(empty)"}
+            <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-gray-900 dark:text-gray-100 break-words">
+              {email.text || (email.html ? email.html.replace(/<[^>]+>/g, " ").trim() : "(No message body content)")}
             </pre>
           )}
         </div>

@@ -18,6 +18,7 @@ import {
   ArchiveIcon,
   ChevronDownIcon,
   EnvelopeIcon,
+  RefreshIcon,
   SearchIcon,
   TrashBinIcon,
   VerticalDotsIcon,
@@ -33,6 +34,7 @@ export default function MailHeader({
   onSearchChange,
   onDeleteSelected,
   onMarkAsRead,
+  onRefresh,
 }: MailHeaderProps) {
   const [isSelectOpen, setIsSelectOpen] = useState(false);
   const selectBoxRef = useRef<HTMLDivElement>(null);
@@ -95,6 +97,19 @@ export default function MailHeader({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {onRefresh && (
+          <Button
+            size="icon-sm"
+            variant="outline"
+            onClick={onRefresh}
+            aria-label="Refresh mailbox"
+            title="Refresh mailbox"
+            className="cursor-pointer"
+          >
+            <RefreshIcon className="size-4" />
+          </Button>
+        )}
 
         <Button
           size="icon-sm"

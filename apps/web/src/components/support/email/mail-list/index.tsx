@@ -15,6 +15,7 @@ export default function MailList({
   onToggleStar: controlledOnToggleStar,
   onDeleteSelected,
   onMarkAsRead,
+  onRefresh,
   searchQuery: controlledSearchQuery,
   onSearchChange: controlledOnSearchChange,
   totalItems,
@@ -93,6 +94,7 @@ export default function MailList({
         onSearchChange={onSearchChange}
         onDeleteSelected={onDeleteSelected}
         onMarkAsRead={onMarkAsRead}
+        onRefresh={onRefresh}
       />
 
       <div className="custom-scrollbar flex-1 overflow-x-hidden overflow-y-auto">

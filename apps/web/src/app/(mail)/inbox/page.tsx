@@ -276,6 +276,10 @@ function InboxContent() {
             onToggleStar={handleToggleStar}
             onDeleteSelected={handleDeleteSelected}
             onMarkAsRead={handleMarkAsRead}
+            onRefresh={() => {
+              fetchMessages();
+              fetchStats();
+            }}
             onSelectMail={(id) => router.push(`/inbox/${id}`)}
             totalItems={messages.length}
           />

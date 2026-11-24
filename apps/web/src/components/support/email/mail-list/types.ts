@@ -9,6 +9,7 @@ export interface MailListProps {
   onToggleStar?: (id: string) => void;
   onDeleteSelected?: () => void;
   onMarkAsRead?: () => void;
+  onRefresh?: () => void;
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
   totalItems?: number;
@@ -24,6 +25,7 @@ export interface MailHeaderProps {
   onSearchChange: (query: string) => void;
   onDeleteSelected?: () => void;
   onMarkAsRead?: () => void;
+  onRefresh?: () => void;
 }
 
 export interface MailItemProps {
