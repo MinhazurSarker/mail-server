@@ -13,4 +13,5 @@ export * from "./models/DeliveryQueue.js";
 export * from "./models/Contact.js";
 export * from "./models/CalendarEvent.js";
 export * from "./models/Template.js";
+export * from "./migrations/totp_deduplication.js";
 export { default as mongoose, Types, isValidObjectId } from "mongoose";
