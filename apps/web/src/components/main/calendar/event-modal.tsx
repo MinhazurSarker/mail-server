@@ -1,20 +1,18 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import React, { useEffect, useState } from "react";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
-  DialogDescription,
+  DialogHeader,
   DialogTitle,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import flatpickr from "flatpickr";
-import React, { useEffect, useRef, useState } from "react";
-import { CloseIcon } from "./icons";
+import { Trash2 } from "lucide-react";
 import type { CalendarEvent, EventFormData } from "./types";
 
 export interface CalendarEventModalProps {
@@ -26,14 +24,15 @@ export interface CalendarEventModalProps {
   initialStartDate?: string;
   initialEndDate?: string;
   onSave: (data: EventFormData) => void;
+  onDelete?: (id: string) => void;
 }
 
 const EVENT_COLORS = [
-  "Primary",
-  "Danger",
-  "Success",
-  "Warning",
-  "Info",
+  { label: "Primary", value: "Primary", bgClass: "bg-blue-500", textClass: "text-blue-500", borderClass: "border-blue-500" },
+  { label: "Success", value: "Success", bgClass: "bg-emerald-500", textClass: "text-emerald-500", borderClass: "border-emerald-500" },
+  { label: "Warning", value: "Warning", bgClass: "bg-amber-500", textClass: "text-amber-500", borderClass: "border-amber-500" },
+  { label: "Danger", value: "Danger", bgClass: "bg-rose-500", textClass: "text-rose-500", borderClass: "border-rose-500" },
+  { label: "Info", value: "Info", bgClass: "bg-cyan-500", textClass: "text-cyan-500", borderClass: "border-cyan-500" },
 ] as const;
 
 export default function CalendarEventModal({
@@ -45,6 +44,7 @@ export default function CalendarEventModal({
   initialStartDate = "",
   initialEndDate = "",
   onSave,
+  onDelete,
 }: CalendarEventModalProps) {
   const isModalOpen = open ?? isOpen ?? false;
   const handleOpenChange = (nextOpen: boolean) => {
@@ -58,292 +58,207 @@ export default function CalendarEventModal({
   const [eventStartDate, setEventStartDate] = useState("");
   const [eventEndDate, setEventEndDate] = useState("");
   const [eventLevel, setEventLevel] = useState("Primary");
-
-  const startDateInputRef = useRef<HTMLInputElement>(null);
-  const endDateInputRef = useRef<HTMLInputElement>(null);
-  const startPickerRef = useRef<flatpickr.Instance | null>(null);
-  const endPickerRef = useRef<flatpickr.Instance | null>(null);
-
-  const [prevSyncState, setPrevSyncState] = useState({
-    selectedEvent,
-    initialStartDate,
-    initialEndDate,
-    isOpen: isModalOpen,
-  });
-
-  if (
-    prevSyncState.selectedEvent !== selectedEvent ||
-    prevSyncState.initialStartDate !== initialStartDate ||
-    prevSyncState.initialEndDate !== initialEndDate ||
-    prevSyncState.isOpen !== isModalOpen
-  ) {
-    setPrevSyncState({
-      selectedEvent,
-      initialStartDate,
-      initialEndDate,
-      isOpen: isModalOpen,
-    });
-    if (selectedEvent) {
-      setEventTitle((selectedEvent.title as string) || "");
-      const startStr =
-        typeof selectedEvent.start === "string"
-          ? selectedEvent.start.split("T")[0]
-          : selectedEvent.start instanceof Date
-            ? selectedEvent.start.toISOString().split("T")[0]
-            : "";
-      const endStr =
-        typeof selectedEvent.end === "string"
-          ? selectedEvent.end.split("T")[0]
-          : selectedEvent.end instanceof Date
-            ? selectedEvent.end.toISOString().split("T")[0]
-            : "";
-      setEventStartDate(startStr);
-      setEventEndDate(endStr || startStr);
-      setEventLevel(selectedEvent.extendedProps?.calendar || "Primary");
-    } else {
-      setEventTitle("");
-      setEventStartDate(initialStartDate);
-      setEventEndDate(initialEndDate || initialStartDate);
-      setEventLevel("Primary");
-    }
-  }
-
-  const initialDatesRef = useRef({ eventStartDate, eventEndDate });
+  const [eventLocation, setEventLocation] = useState("");
+  const [eventDescription, setEventDescription] = useState("");
 
   useEffect(() => {
-    initialDatesRef.current = { eventStartDate, eventEndDate };
-  }, [eventStartDate, eventEndDate]);
-
-  // Initialize and tear down flatpickr instances when modal is open
-  useEffect(() => {
-    if (!isModalOpen) {
-      if (startPickerRef.current) {
-        startPickerRef.current.destroy();
-        startPickerRef.current = null;
+    if (isModalOpen) {
+      if (selectedEvent) {
+        setEventTitle((selectedEvent.title as string) || "");
+        const startStr =
+          typeof selectedEvent.start === "string"
+            ? selectedEvent.start.split("T")[0]
+            : selectedEvent.start instanceof Date
+              ? selectedEvent.start.toISOString().split("T")[0]
+              : "";
+        const endStr =
+          typeof selectedEvent.end === "string"
+            ? selectedEvent.end.split("T")[0]
+            : selectedEvent.end instanceof Date
+              ? selectedEvent.end.toISOString().split("T")[0]
+              : startStr;
+        setEventStartDate(startStr);
+        setEventEndDate(endStr || startStr);
+        setEventLevel(selectedEvent.extendedProps?.calendar || "Primary");
+        setEventLocation((selectedEvent.extendedProps as any)?.location || "");
+        setEventDescription((selectedEvent.extendedProps as any)?.description || "");
+      } else {
+        setEventTitle("");
+        setEventStartDate(initialStartDate);
+        setEventEndDate(initialEndDate || initialStartDate);
+        setEventLevel("Primary");
+        setEventLocation("");
+        setEventDescription("");
       }
-      if (endPickerRef.current) {
-        endPickerRef.current.destroy();
-        endPickerRef.current = null;
-      }
-      return;
     }
-
-    const prevArrowSvg =
-      '<svg class="stroke-current rtl:rotate-180" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12.5 15L7.5 10L12.5 5" stroke="" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    const nextArrowSvg =
-      '<svg class="stroke-current rtl:rotate-180" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.5 15L12.5 10L7.5 5" stroke="" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-
-    const timer = setTimeout(() => {
-      if (startDateInputRef.current && !startPickerRef.current) {
-        const fp = flatpickr(startDateInputRef.current, {
-          dateFormat: "Y-m-d",
-          defaultDate: initialDatesRef.current.eventStartDate || undefined,
-          monthSelectorType: "static",
-          static: true,
-          clickOpens: true,
-          prevArrow: prevArrowSvg,
-          nextArrow: nextArrowSvg,
-          onChange: (_dates, dateStr) => {
-            setEventStartDate(dateStr);
-          },
-        });
-        startPickerRef.current = Array.isArray(fp) ? fp[0] : fp;
-      }
-
-      if (endDateInputRef.current && !endPickerRef.current) {
-        const fp = flatpickr(endDateInputRef.current, {
-          dateFormat: "Y-m-d",
-          defaultDate: initialDatesRef.current.eventEndDate || undefined,
-          monthSelectorType: "static",
-          static: true,
-          clickOpens: true,
-          prevArrow: prevArrowSvg,
-          nextArrow: nextArrowSvg,
-          onChange: (_dates, dateStr) => {
-            setEventEndDate(dateStr);
-          },
-        });
-        endPickerRef.current = Array.isArray(fp) ? fp[0] : fp;
-      }
-    }, 10);
-
-    return () => {
-      clearTimeout(timer);
-      if (startPickerRef.current) {
-        startPickerRef.current.destroy();
-        startPickerRef.current = null;
-      }
-      if (endPickerRef.current) {
-        endPickerRef.current.destroy();
-        endPickerRef.current = null;
-      }
-    };
-  }, [isModalOpen]);
-
-  // Keep flatpickr dates in sync if eventStartDate/eventEndDate changes externally
-  useEffect(() => {
-    if (startPickerRef.current && eventStartDate) {
-      startPickerRef.current.setDate(eventStartDate, false);
-    }
-  }, [eventStartDate]);
-
-  useEffect(() => {
-    if (endPickerRef.current && eventEndDate) {
-      endPickerRef.current.setDate(eventEndDate, false);
-    }
-  }, [eventEndDate]);
+  }, [isModalOpen, selectedEvent, initialStartDate, initialEndDate]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const titleVal =
-      eventTitle.trim() || (selectedEvent ? "Event" : "New Event");
-    const startDateVal = eventStartDate;
-    const endDateVal = eventEndDate || startDateVal;
-    const levelVal = eventLevel || "Primary";
+    if (!eventTitle.trim()) return;
 
     onSave({
-      title: titleVal,
-      start: startDateVal,
-      end: endDateVal,
-      level: levelVal,
-    });
+      title: eventTitle.trim(),
+      start: eventStartDate,
+      end: eventEndDate || eventStartDate,
+      level: eventLevel,
+      location: eventLocation.trim() || undefined,
+      description: eventDescription.trim() || undefined,
+    } as any);
   };
 
   return (
     <Dialog open={isModalOpen} onOpenChange={handleOpenChange}>
-      <DialogContent
-        showCloseButton={false}
-        className="overflow-visible border-none bg-transparent p-0 shadow-none sm:max-w-175"
-      >
-        <Card className="relative w-full rounded-3xl border border-gray-200 bg-white p-6 shadow-theme-lg sm:p-11 dark:border-gray-800 dark:bg-[#1E2635]">
-          {/* Top-end circular close button (Figma large design) */}
-          <DialogClose
-            render={
-              <Button
-                variant="ghost"
-                size="icon-lg"
-                className="absolute inset-e-6 top-6 hidden size-11 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-800 sm:flex dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
-              >
-                <CloseIcon className="size-6" />
-                <span className="sr-only">Close</span>
-              </Button>
-            }
-          />
+      <DialogContent className="sm:max-w-md bg-white dark:bg-[#1E2635] border border-gray-200 dark:border-gray-800 text-gray-900 dark:text-gray-100 rounded-2xl p-6 shadow-2xl">
+        <DialogHeader className="space-y-1">
+          <DialogTitle className="text-xl font-bold tracking-tight text-gray-900 dark:text-white">
+            {selectedEvent ? "Edit Event" : "Create Calendar Event"}
+          </DialogTitle>
+          <DialogDescription className="text-xs text-gray-500 dark:text-gray-400">
+            {selectedEvent
+              ? "Update details or reschedule this event."
+              : "Schedule a meeting, deadline, or milestone."}
+          </DialogDescription>
+        </DialogHeader>
 
-          {/* Title and subtitle */}
-          <div className="flex flex-col gap-2">
-            <DialogTitle className="text-title-lg leading-8 font-semibold text-gray-800 sm:text-2xl dark:text-white/90">
-              Add / Edit Event
-            </DialogTitle>
-            <DialogDescription className="text-sm leading-5 font-normal text-gray-500 dark:text-gray-400">
-              Plan your next big moment: schedule or edit an event to stay on
-              track
-            </DialogDescription>
+        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+          {/* Event Title */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+              Event Title *
+            </Label>
+            <Input
+              required
+              placeholder="e.g. Product Review with Wayne Corp"
+              value={eventTitle}
+              onChange={(e) => setEventTitle(e.target.value)}
+              className="h-10 text-xs bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white placeholder:text-gray-400"
+            />
           </div>
 
-          {/* Form fields */}
-          <form
-            onSubmit={handleSubmit}
-            className="mt-6 space-y-5 sm:mt-8 sm:space-y-6"
-          >
-            {/* Event Title */}
-            <div>
-              <Label
-                htmlFor="event-title"
-                className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300"
-              >
-                Event Title
+          {/* Event Color / Category */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+              Category & Color
+            </Label>
+            <div className="flex flex-wrap items-center gap-2">
+              {EVENT_COLORS.map((col) => {
+                const isSelected = eventLevel === col.value;
+                return (
+                  <button
+                    key={col.value}
+                    type="button"
+                    onClick={() => setEventLevel(col.value)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer ${
+                      isSelected
+                        ? "border-brand-500 bg-brand-50 dark:bg-brand-950/40 text-brand-700 dark:text-brand-300 font-semibold ring-1 ring-brand-500"
+                        : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                    }`}
+                  >
+                    <span className={`size-2 rounded-full ${col.bgClass}`} />
+                    <span>{col.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Date Range: Start Date & End Date */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+                Start Date *
               </Label>
               <Input
-                id="event-title"
-                value={eventTitle}
-                onChange={(e) => setEventTitle(e.target.value)}
-                className="h-11 rounded-[10px]"
-              />
-            </div>
-
-            {/* Event Color */}
-            <div>
-              <Label className="mb-3 block text-sm font-medium text-gray-700 sm:mb-4 dark:text-gray-300">
-                Event Color
-              </Label>
-              <RadioGroup
-                value={eventLevel}
-                onValueChange={(val) => setEventLevel(val)}
-                className="flex flex-wrap items-center gap-4 sm:gap-5"
-              >
-                {EVENT_COLORS.map((color) => (
-                  <div key={color} className="flex items-center gap-2">
-                    <RadioGroupItem
-                      value={color}
-                      id={`modal-color-${color.toLowerCase()}`}
-                    />
-                    <Label
-                      htmlFor={`modal-color-${color.toLowerCase()}`}
-                      className="cursor-pointer text-sm font-normal text-gray-700 dark:text-gray-400"
-                    >
-                      {color}
-                    </Label>
-                  </div>
-                ))}
-              </RadioGroup>
-            </div>
-
-            {/* Enter Start Date */}
-            <div>
-              <Label
-                htmlFor="event-start-date"
-                className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300"
-              >
-                Enter Start Date
-              </Label>
-              <Input
-                ref={startDateInputRef}
-                id="event-start-date"
-                placeholder="dd/mm/yyyy"
+                type="date"
+                required
                 value={eventStartDate}
                 onChange={(e) => setEventStartDate(e.target.value)}
-                className="h-11 rounded-[10px]"
+                className="h-10 text-xs bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white"
               />
             </div>
-
-            {/* Enter End Date */}
-            <div>
-              <Label
-                htmlFor="event-end-date"
-                className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300"
-              >
-                Enter End Date
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+                End Date *
               </Label>
               <Input
-                ref={endDateInputRef}
-                id="event-end-date"
-                placeholder="dd/mm/yyyy"
+                type="date"
+                required
                 value={eventEndDate}
+                min={eventStartDate}
                 onChange={(e) => setEventEndDate(e.target.value)}
-                className="h-11 rounded-[10px]"
+                className="h-10 text-xs bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white"
               />
             </div>
+          </div>
 
-            {/* Action buttons (Small: 2 columns full-width, Large: right-aligned) */}
-            <div className="grid grid-cols-2 gap-3 pt-2 sm:flex sm:justify-end sm:pt-4">
+          {/* Location / Meeting Link */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+              Location / Video Link (Optional)
+            </Label>
+            <Input
+              placeholder="e.g. Conference Room A, or https://meet.jit.si/..."
+              value={eventLocation}
+              onChange={(e) => setEventLocation(e.target.value)}
+              className="h-10 text-xs bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white placeholder:text-gray-400"
+            />
+          </div>
+
+          {/* Notes / Description */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+              Notes (Optional)
+            </Label>
+            <textarea
+              rows={2}
+              placeholder="Agenda items, dial-in codes, or description..."
+              value={eventDescription}
+              onChange={(e) => setEventDescription(e.target.value)}
+              className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-xs text-gray-900 dark:text-white placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+
+          <DialogFooter className="flex items-center justify-between gap-2 pt-3 border-t border-gray-100 dark:border-gray-800">
+            {selectedEvent && onDelete ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  if (confirm("Are you sure you want to delete this event?")) {
+                    onDelete(String(selectedEvent.id));
+                  }
+                }}
+                className="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30 gap-1.5"
+              >
+                <Trash2 className="size-3.5" />
+                Delete
+              </Button>
+            ) : (
+              <div />
+            )}
+
+            <div className="flex items-center gap-2">
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 onClick={() => handleOpenChange(false)}
-                className="h-11 w-full rounded-[10px] px-5 py-3 sm:w-auto"
+                className="text-xs"
               >
-                Close
+                Cancel
               </Button>
               <Button
                 type="submit"
-                className="h-11 w-full rounded-[10px] px-5 py-3 sm:w-auto"
+                size="sm"
+                className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium cursor-pointer"
               >
-                {selectedEvent ? "Save Changes" : "Add Event"}
+                {selectedEvent ? "Save Changes" : "Create Event"}
               </Button>
             </div>
-          </form>
-        </Card>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

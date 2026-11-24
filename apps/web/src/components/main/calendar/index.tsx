@@ -20,7 +20,8 @@ import multiMonthPlugin from "@fullcalendar/react/multimonth";
 import themePlugin from "@fullcalendar/react/themes/classic";
 import timeGridPlugin from "@fullcalendar/react/timegrid";
 import { useLocale } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { rpcCall } from "@/lib/api";
 import CalendarEventItem from "./event-item";
 import CalendarEventModal from "./event-modal";
 import {
@@ -128,39 +129,114 @@ export default function Calendar() {
     setIsEventModalOpen(true);
   };
 
-  const handleSaveEvent = (formData: EventFormData) => {
+  const fetchCalendarEvents = useCallback(async () => {
+    try {
+      const startRange = new Date(Date.now() - 90 * 86400000).toISOString();
+      const endRange = new Date(Date.now() + 180 * 86400000).toISOString();
+      const res = await rpcCall<{ items: any[] }>("calendar", "list", {
+        startRange,
+        endRange,
+      });
+      if (res?.items && Array.isArray(res.items)) {
+        if (res.items.length > 0) {
+          setEvents(
+            res.items.map((ev: any) => ({
+              id: ev.id,
+              title: ev.title,
+              start: ev.startTime ? ev.startTime.split("T")[0] : "",
+              end: ev.endTime ? ev.endTime.split("T")[0] : "",
+              extendedProps: {
+                calendar: ev.color || "Primary",
+                location: ev.location,
+                description: ev.description,
+              },
+            })),
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("Using offline / fallback calendar events:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCalendarEvents();
+  }, [fetchCalendarEvents]);
+
+  const handleSaveEvent = async (formData: EventFormData & { location?: string; description?: string }) => {
     const titleVal =
       formData.title.trim() || (selectedEvent ? "Event" : "New Event");
     const startDateVal = formData.start;
     const endDateVal = formData.end || startDateVal;
     const levelVal = formData.level || "Primary";
 
-    if (selectedEvent) {
-      setEvents((prevEvents) =>
-        prevEvents.map((ev) =>
-          String(ev.id) === String(selectedEvent.id)
-            ? {
-                ...ev,
-                title: titleVal,
-                start: startDateVal,
-                end: endDateVal || startDateVal,
-                extendedProps: { calendar: levelVal },
-              }
-            : ev,
-        ),
-      );
-    } else {
-      const newEvent: CalendarEvent = {
-        id: Date.now().toString(),
-        title: titleVal,
-        start: startDateVal,
-        end: endDateVal || startDateVal,
-        allDay: true,
-        extendedProps: { calendar: levelVal },
-      };
-      setEvents((prevEvents) => [...prevEvents, newEvent]);
-    }
     setIsEventModalOpen(false);
+
+    try {
+      if (selectedEvent && !selectedEvent.id?.startsWith("seed_") && !["1", "2", "3"].includes(String(selectedEvent.id))) {
+        await rpcCall("calendar", "update", {
+          eventId: String(selectedEvent.id),
+          title: titleVal,
+          startTime: new Date(`${startDateVal}T09:00:00Z`).toISOString(),
+          endTime: new Date(`${endDateVal}T10:00:00Z`).toISOString(),
+          color: levelVal,
+          location: formData.location,
+          description: formData.description,
+        });
+      } else {
+        await rpcCall("calendar", "create", {
+          title: titleVal,
+          startTime: new Date(`${startDateVal}T09:00:00Z`).toISOString(),
+          endTime: new Date(`${endDateVal}T10:00:00Z`).toISOString(),
+          color: levelVal,
+          location: formData.location,
+          description: formData.description,
+        });
+      }
+      fetchCalendarEvents();
+    } catch (err) {
+      console.error("API event persistence error:", err);
+      // Fallback local state update
+      if (selectedEvent) {
+        setEvents((prevEvents) =>
+          prevEvents.map((ev) =>
+            String(ev.id) === String(selectedEvent.id)
+              ? {
+                  ...ev,
+                  title: titleVal,
+                  start: startDateVal,
+                  end: endDateVal || startDateVal,
+                  extendedProps: { calendar: levelVal },
+                }
+              : ev,
+          ),
+        );
+      } else {
+        const newEvent: CalendarEvent = {
+          id: Date.now().toString(),
+          title: titleVal,
+          start: startDateVal,
+          end: endDateVal || startDateVal,
+          allDay: true,
+          extendedProps: { calendar: levelVal },
+        };
+        setEvents((prevEvents) => [...prevEvents, newEvent]);
+      }
+    }
+  };
+
+  const handleDeleteEvent = async (id: string) => {
+    setIsEventModalOpen(false);
+    try {
+      if (!["1", "2", "3"].includes(String(id))) {
+        await rpcCall("calendar", "delete", { eventId: String(id) });
+        fetchCalendarEvents();
+        return;
+      }
+    } catch (err) {
+      console.error("Failed to delete event via API:", err);
+    }
+    setEvents((prevEvents) => prevEvents.filter((ev) => String(ev.id) !== String(id)));
   };
 
   useEffect(() => {
@@ -517,6 +593,7 @@ export default function Calendar() {
         initialStartDate={selectedStartDate}
         initialEndDate={selectedEndDate}
         onSave={handleSaveEvent}
+        onDelete={handleDeleteEvent}
       />
     </div>
   );
