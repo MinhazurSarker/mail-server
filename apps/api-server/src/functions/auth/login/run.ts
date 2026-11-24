@@ -14,12 +14,23 @@ export const run = async (
 
   // Check if user requires mandatory 2FA onboarding (first login)
   if (user.status === "PENDING_SECURITY_SETUP") {
+    const setup = AuthService.generateTotpSetup(user);
+    const { challengeToken } = await AuthService.createAuthChallenge({
+      userId: user._id,
+      type: "FIRST_LOGIN_ONBOARDING",
+      factorsRequired: ["TOTP"],
+      totpSecretPending: setup.secret,
+    });
+
     return {
       status: "REQUIRES_ONBOARDING",
+      challengeToken,
       userId: user._id.toString(),
       email: user.email,
       role: user.role,
       requiresOnboarding: true,
+      totpSecret: setup.secret,
+      otpauthUri: setup.otpauthUri,
     };
   }
 
@@ -28,8 +39,15 @@ export const run = async (
   const methods = credentials.map((c) => c.type.toLowerCase());
 
   if (methods.length > 0) {
+    const { challengeToken } = await AuthService.createAuthChallenge({
+      userId: user._id,
+      type: "MFA_LOGIN",
+      factorsRequired: methods,
+    });
+
     return {
       status: "REQUIRES_2FA",
+      challengeToken,
       userId: user._id.toString(),
       email: user.email,
       role: user.role,
@@ -38,7 +56,7 @@ export const run = async (
     };
   }
 
-  // If no 2FA required (fallback), issue tokens directly
+  // If no 2FA required (fallback for accounts without MFA enforced), issue tokens directly
   const tokens = await AuthService.generateTokens(user);
   return {
     status: "AUTHENTICATED",

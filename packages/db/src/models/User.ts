@@ -8,6 +8,7 @@ export interface IUser extends Document {
   passwordHash: string;
   role: "PLATFORM_ADMIN" | "ORG_ADMIN" | "MAILBOX_USER";
   status: "PENDING_SECURITY_SETUP" | "ACTIVE" | "LOCKED" | "SUSPENDED";
+  tokenVersion: number;
   hasApiPermission: boolean;
   twoFactorEnforced: boolean;
   storageQuotaBytes: number;
@@ -43,6 +44,7 @@ const UserSchema = new Schema<IUser>(
       default: "PENDING_SECURITY_SETUP",
       index: true,
     },
+    tokenVersion: { type: Number, default: 1 },
     hasApiPermission: { type: Boolean, default: false },
     twoFactorEnforced: { type: Boolean, default: true },
     storageQuotaBytes: { type: Number, default: 10737418240 }, // 10 GB

@@ -11,9 +11,8 @@ export const run = async (
   _context: MiddlewareContext,
 ): Promise<Output> => {
   const result = await AuthService.completeFirstLoginSecuritySetup({
-    userId: input.userId,
+    challengeToken: input.challengeToken,
     newPassword: input.newPassword,
-    totpSecret: input.totpSecret,
     totpToken: input.totpToken,
     passkeyCredential: input.passkeyCredential,
   });

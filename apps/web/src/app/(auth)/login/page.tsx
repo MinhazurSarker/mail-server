@@ -6,6 +6,7 @@ import Link from "next/link";
 import { startAuthentication } from "@simplewebauthn/browser";
 import { rpcCall } from "@/lib/api";
 import { saveAccount } from "@/lib/account-store";
+import { setSessionTokens } from "@/lib/session";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,6 +21,7 @@ export default function LoginPage() {
   const [totpCode, setTotpCode] = useState("");
   const [requires2FA, setRequires2FA] = useState(false);
   const [userId, setUserId] = useState("");
+  const [challengeToken, setChallengeToken] = useState("");
   const [twoFactorMethods, setTwoFactorMethods] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
@@ -55,11 +57,7 @@ export default function LoginPage() {
     fallbackUser?: { userId: string; email: string; role?: string; displayName?: string },
   ) => {
     if (typeof window !== "undefined") {
-      localStorage.setItem("accessToken", token);
-      if (refreshToken) localStorage.setItem("refreshToken", refreshToken);
-
-      const isSecure = window.location.protocol === "https:";
-      document.cookie = `authorization=Bearer ${token}; path=/; max-age=604800; SameSite=Lax${isSecure ? "; Secure" : ""};`;
+      setSessionTokens(token, refreshToken);
     }
 
     let profile: any = null;
@@ -153,7 +151,7 @@ export default function LoginPage() {
             email: string;
             role: string;
             displayName?: string;
-          }>("auth", "totp-verify", { userId, code: totpCode.trim() });
+          }>("auth", "totp-verify", { challengeToken, code: totpCode.trim() });
 
           await syncAuthSession(res.accessToken, res.refreshToken, res);
           return;
@@ -171,6 +169,7 @@ export default function LoginPage() {
         status: "AUTHENTICATED" | "REQUIRES_ONBOARDING" | "REQUIRES_2FA";
         userId: string;
         email: string;
+        challengeToken?: string;
         displayName?: string;
         role?: string;
         twoFactorMethods?: string[];
@@ -179,13 +178,16 @@ export default function LoginPage() {
       }>("auth", "login", { email: email.trim(), password });
 
       if (res.status === "REQUIRES_ONBOARDING") {
-        router.push(`/onboarding/security?userId=${res.userId}&email=${encodeURIComponent(res.email)}`);
+        router.push(
+          `/onboarding/security?challengeToken=${res.challengeToken}&email=${encodeURIComponent(res.email)}`,
+        );
         return;
       }
 
       if (res.status === "REQUIRES_2FA") {
         setRequires2FA(true);
         setUserId(res.userId);
+        setChallengeToken(res.challengeToken || "");
         const methods = res.twoFactorMethods || [];
         setTwoFactorMethods(methods);
         setLoading(false);
@@ -204,6 +206,7 @@ export default function LoginPage() {
 
   const resetToLogin = () => {
     setRequires2FA(false);
+    setChallengeToken("");
     setTotpCode("");
     setError(null);
   };

@@ -3,6 +3,7 @@ export * from "./models/Organization.js";
 export * from "./models/Domain.js";
 export * from "./models/User.js";
 export * from "./models/Credential.js";
+export * from "./models/AuthChallenge.js";
 export * from "./models/ApiKey.js";
 export * from "./models/Message.js";
 export * from "./models/MessageBody.js";

@@ -2,18 +2,21 @@
  * middlewares/auth/run.ts
  * ─────────────────────────────────────────────────────────────────────────────
  * Auth middleware — validates JWT bearer token or API key and injects auth claims.
+ * Enforces session token versioning (revocation), account active status,
+ * organization active status, and required role-based access control.
  */
 
 import type { Static } from "@sinclair/typebox";
 import { AppError, ErrorCode, type MiddlewareFn } from "@cellsweb/rpc-core";
 import { AuthService, ApiKeyService } from "@cellsinbox/service";
-import { OrganizationModel } from "@cellsinbox/db";
+import { UserModel, OrganizationModel } from "@cellsinbox/db";
 import { AuthContextSchema, type UserRole } from "./constants.js";
 
 export type AuthContext = Static<typeof AuthContextSchema>;
 
 export interface AuthMiddlewareOptions {
   roles?: UserRole[];
+  optional?: boolean;
 }
 
 export const run: MiddlewareFn<AuthMiddlewareOptions> = async (
@@ -32,7 +35,7 @@ export const run: MiddlewareFn<AuthMiddlewareOptions> = async (
     authHeader?.replace(/^Bearer\s+/i, "") ??
     (typeof bodyToken === "string" ? bodyToken : undefined);
   const roles = options?.roles;
-  const isRolesEmpty = !roles || roles.length === 0;
+  const isOptional = options?.optional === true;
 
   let authContext: AuthContext | null = null;
 
@@ -40,16 +43,52 @@ export const run: MiddlewareFn<AuthMiddlewareOptions> = async (
   if (token) {
     try {
       const payload = await AuthService.verifyAccessToken(token);
+
+      // Verify current user existence and active status in database
+      const user = await UserModel.findById(payload.userId);
+      if (!user) {
+        throw new AppError(ErrorCode.UNAUTHORIZED, "User account no longer exists");
+      }
+
+      if (user.status !== "ACTIVE") {
+        throw new AppError(
+          ErrorCode.FORBIDDEN,
+          `Account is ${user.status.toLowerCase()}. Access denied.`,
+        );
+      }
+
+      // Enforce token versioning (immediate session invalidation on logout / password / 2FA changes)
+      if (user.tokenVersion !== (payload.tokenVersion || 1)) {
+        throw new AppError(
+          ErrorCode.UNAUTHORIZED,
+          "Session has been revoked. Please sign in again.",
+        );
+      }
+
+      // Enforce organization active status
+      if (user.role !== "PLATFORM_ADMIN" && user.organizationId) {
+        const org = await OrganizationModel.findById(user.organizationId);
+        if (org && org.status === "SUSPENDED") {
+          throw new AppError(
+            ErrorCode.FORBIDDEN,
+            "This organization has been suspended by platform administration. Contact support.",
+          );
+        }
+      }
+
       authContext = {
-        userId: payload.userId,
-        organizationId: payload.organizationId,
-        domainId: payload.domainId,
-        email: payload.email,
-        role: payload.role as UserRole,
-        status: payload.status,
+        userId: user._id.toString(),
+        organizationId: user.organizationId.toString(),
+        domainId: user.domainId?.toString(),
+        email: user.email,
+        role: user.role as UserRole,
+        status: user.status,
         isApiKey: false,
       };
-    } catch {
+    } catch (err: any) {
+      if (err instanceof AppError) {
+        throw err;
+      }
       throw new AppError(ErrorCode.UNAUTHORIZED, "Invalid or expired session token");
     }
   }
@@ -57,6 +96,25 @@ export const run: MiddlewareFn<AuthMiddlewareOptions> = async (
   else if (apiKeyHeader) {
     try {
       const apiKey = await ApiKeyService.validateApiKey(apiKeyHeader);
+
+      const user = await UserModel.findById(apiKey.userId);
+      if (!user || user.status !== "ACTIVE") {
+        throw new AppError(
+          ErrorCode.FORBIDDEN,
+          "API key owner account is inactive or suspended",
+        );
+      }
+
+      if (user.role !== "PLATFORM_ADMIN" && apiKey.organizationId) {
+        const org = await OrganizationModel.findById(apiKey.organizationId);
+        if (org && org.status === "SUSPENDED") {
+          throw new AppError(
+            ErrorCode.FORBIDDEN,
+            "This organization has been suspended by platform administration. Contact support.",
+          );
+        }
+      }
+
       authContext = {
         userId: apiKey.userId.toString(),
         organizationId: apiKey.organizationId.toString(),
@@ -66,13 +124,16 @@ export const run: MiddlewareFn<AuthMiddlewareOptions> = async (
         isApiKey: true,
         apiKeyId: apiKey._id.toString(),
       };
-    } catch {
+    } catch (err: any) {
+      if (err instanceof AppError) {
+        throw err;
+      }
       throw new AppError(ErrorCode.UNAUTHORIZED, "Invalid or revoked API key");
     }
   }
 
   // 3. Enforce Authentication
-  if (!isRolesEmpty || roles) {
+  if (!isOptional) {
     if (!authContext) {
       throw new AppError(
         ErrorCode.UNAUTHORIZED,
@@ -85,17 +146,6 @@ export const run: MiddlewareFn<AuthMiddlewareOptions> = async (
         ErrorCode.FORBIDDEN,
         `Insufficient permissions: Requires role [${roles.join(", ")}]`,
       );
-    }
-
-    // Check organization suspension
-    if (authContext.role !== "PLATFORM_ADMIN" && authContext.organizationId) {
-      const org = await OrganizationModel.findById(authContext.organizationId);
-      if (org && org.status === "SUSPENDED") {
-        throw new AppError(
-          ErrorCode.FORBIDDEN,
-          "This organization has been suspended by platform administration. Contact support.",
-        );
-      }
     }
   }
 

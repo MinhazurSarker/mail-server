@@ -4,6 +4,8 @@ import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
 import { rpcCall } from "@/lib/api";
+import { setSessionTokens } from "@/lib/session";
+import { saveAccount } from "@/lib/account-store";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +17,7 @@ import { ShieldCheck, AlertCircle, QrCode } from "lucide-react";
 function OnboardingSecurityContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const challengeToken = searchParams.get("challengeToken") || "";
   const userId = searchParams.get("userId") || "";
   const email = searchParams.get("email") || "";
 
@@ -30,12 +33,15 @@ function OnboardingSecurityContent() {
 
   useEffect(() => {
     let isMounted = true;
-    if (!userId) {
+    if (!challengeToken && !userId) {
       router.push("/login");
       return;
     }
 
-    rpcCall<{ secret: string; otpauthUri: string }>("auth", "totp-setup", { userId })
+    rpcCall<{ secret: string; otpauthUri: string }>("auth", "totp-setup", {
+      challengeToken: challengeToken || undefined,
+      userId: userId || undefined,
+    })
       .then((res) => {
         if (!isMounted) return;
         setTotpSecret(res.secret);
@@ -91,19 +97,27 @@ function OnboardingSecurityContent() {
     setLoading(true);
 
     try {
-      const res = await rpcCall<{ accessToken: string; refreshToken: string }>(
-        "auth",
-        "onboarding-complete",
-        {
-          userId,
-          newPassword: newPassword || undefined,
-          totpSecret,
-          totpToken: totpToken.trim(),
-        },
-      );
+      const res = await rpcCall<{
+        accessToken: string;
+        refreshToken: string;
+        userId: string;
+        email: string;
+        role: string;
+      }>("auth", "onboarding-complete", {
+        challengeToken,
+        newPassword: newPassword || undefined,
+        totpToken: totpToken.trim(),
+      });
 
-      localStorage.setItem("accessToken", res.accessToken);
-      localStorage.setItem("refreshToken", res.refreshToken);
+      setSessionTokens(res.accessToken, res.refreshToken);
+      saveAccount({
+        userId: res.userId,
+        email: res.email || email,
+        displayName: (res.email || email).split("@")[0],
+        role: res.role || "MAILBOX_USER",
+        token: res.accessToken,
+      });
+
       router.push("/inbox");
     } catch (err: any) {
       setError(err.message || "Failed to complete security setup. Check your 6-digit code.");

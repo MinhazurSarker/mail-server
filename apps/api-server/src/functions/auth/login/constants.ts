@@ -22,9 +22,12 @@ export const outputSchema = Type.Object({
   userId: Type.String(),
   email: Type.String(),
   role: Type.String(),
+  challengeToken: Type.Optional(Type.String()),
   accessToken: Type.Optional(Type.String()),
   refreshToken: Type.Optional(Type.String()),
   requiresOnboarding: Type.Optional(Type.Boolean()),
   requiresTwoFactor: Type.Optional(Type.Boolean()),
   twoFactorMethods: Type.Optional(Type.Array(Type.String())),
+  totpSecret: Type.Optional(Type.String()),
+  otpauthUri: Type.Optional(Type.String()),
 });

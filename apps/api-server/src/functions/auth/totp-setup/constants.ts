@@ -9,7 +9,8 @@ export const metadata = {
 export const contentType = "application/json" as const;
 
 export const inputSchema = Type.Object({
-  userId: Type.String({ minLength: 1 }),
+  challengeToken: Type.Optional(Type.String({ description: "Onboarding challenge token" })),
+  userId: Type.Optional(Type.String({ description: "User ID for first-login setup" })),
 });
 
 export const outputSchema = Type.Object({

@@ -10,6 +10,7 @@ export const contentType = "application/json" as const;
 
 export const inputSchema = Type.Object({
   name: Type.Optional(Type.String()),
+  challengeToken: Type.Optional(Type.String()),
   response: Type.Any(),
 });
 

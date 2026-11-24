@@ -6,6 +6,27 @@ import type { inputSchema } from "./constants.js";
 
 type Input = Static<typeof inputSchema>;
 
+function extractHost(context: MiddlewareContext): string | undefined {
+  const headers = context.headers || (context as any).req?.headers || {};
+  const hostHeader = (
+    headers["x-forwarded-host"] ||
+    headers["x-original-host"] ||
+    headers["origin"] ||
+    headers["referer"] ||
+    headers["host"]
+  ) as string | undefined;
+
+  if (!hostHeader) return undefined;
+  if (hostHeader.startsWith("http://") || hostHeader.startsWith("https://")) {
+    try {
+      return new URL(hostHeader).host;
+    } catch {
+      return undefined;
+    }
+  }
+  return hostHeader.split(",")[0].trim();
+}
+
 export const run = async (
   _input: Input,
   context: MiddlewareContext & { auth?: AuthContext },
@@ -16,27 +37,11 @@ export const run = async (
   const user = await UserService.getById(authUser.userId);
   if (!user) throw new Error("User not found.");
 
-  const headers = context.headers || (context as any).req?.headers || {};
-  const hostHeader = (
-    headers["x-forwarded-host"] ||
-    headers["x-original-host"] ||
-    headers["origin"] ||
-    headers["referer"] ||
-    headers["host"]
-  ) as string | undefined;
+  const host = extractHost(context);
+  const { options, challengeToken } = await AuthService.generatePasskeyRegistrationOptions(user, host);
 
-  let host: string | undefined = undefined;
-  if (hostHeader) {
-    if (hostHeader.startsWith("http://") || hostHeader.startsWith("https://")) {
-      try {
-        host = new URL(hostHeader).host;
-      } catch {}
-    } else {
-      host = hostHeader.split(",")[0].trim();
-    }
-  }
-
-  const options = await AuthService.generatePasskeyRegistrationOptions(user, host);
-  AuthService.setChallenge(`reg:${authUser.userId}`, options.challenge);
-  return options;
+  return {
+    ...options,
+    challengeToken,
+  };
 };

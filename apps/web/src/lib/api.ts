@@ -1,4 +1,5 @@
 import { createRpcClient } from "@cellsweb/rpc-client";
+import { clearSession } from "./session";
 
 export const API_BASE_URL =
   typeof window !== "undefined"
@@ -47,10 +48,12 @@ export async function rpcCall<T = any>(
         msg.includes("unauthorized") ||
         msg.includes("jwt expired") ||
         msg.includes("invalid token") ||
+        msg.includes("invalid or expired session token") ||
+        msg.includes("session has been revoked") ||
+        msg.includes("authentication required") ||
         err?.status === 401
       ) {
-        localStorage.removeItem("accessToken");
-        document.cookie = "authorization=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        clearSession();
         if (
           !window.location.pathname.startsWith("/login") &&
           !window.location.pathname.startsWith("/onboarding")

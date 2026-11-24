@@ -133,6 +133,7 @@ export class UserService {
 
     const newHash = await argon2.hash(newPass);
     user.passwordHash = newHash;
+    user.tokenVersion = (user.tokenVersion || 1) + 1;
     await user.save();
   }
 }

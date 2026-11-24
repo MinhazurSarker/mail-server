@@ -9,6 +9,7 @@ export interface ICredential extends Document {
   counter?: number;
   transports?: string[];
   secret?: string;
+  lastUsedTimeStep?: number;
   createdAt: Date;
   lastUsedAt?: Date;
 }
@@ -23,6 +24,7 @@ const CredentialSchema = new Schema<ICredential>(
     counter: { type: Number, default: 0 },
     transports: [{ type: String }],
     secret: { type: String, select: false },
+    lastUsedTimeStep: { type: Number, default: 0 },
     lastUsedAt: { type: Date },
   },
   { timestamps: true },

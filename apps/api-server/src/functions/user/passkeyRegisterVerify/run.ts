@@ -8,6 +8,27 @@ import type { inputSchema, outputSchema } from "./constants.js";
 type Input = Static<typeof inputSchema>;
 type Output = Static<typeof outputSchema>;
 
+function extractHost(context: MiddlewareContext): string | undefined {
+  const headers = context.headers || (context as any).req?.headers || {};
+  const hostHeader = (
+    headers["x-forwarded-host"] ||
+    headers["x-original-host"] ||
+    headers["origin"] ||
+    headers["referer"] ||
+    headers["host"]
+  ) as string | undefined;
+
+  if (!hostHeader) return undefined;
+  if (hostHeader.startsWith("http://") || hostHeader.startsWith("https://")) {
+    try {
+      return new URL(hostHeader).host;
+    } catch {
+      return undefined;
+    }
+  }
+  return hostHeader.split(",")[0].trim();
+}
+
 export const run = async (
   input: Input,
   context: MiddlewareContext & { auth?: AuthContext },
@@ -18,32 +39,14 @@ export const run = async (
   const user = await UserService.getById(authUser.userId);
   if (!user) throw new Error("User not found.");
 
-  const challenge = AuthService.getChallenge(`reg:${authUser.userId}`);
-  if (!challenge) {
-    throw new Error("Passkey registration challenge expired. Please retry.");
-  }
+  const host = extractHost(context);
+  const verification = await AuthService.verifyPasskeyRegistration(
+    user,
+    input.response,
+    input.challengeToken,
+    host,
+  );
 
-  const headers = context.headers || (context as any).req?.headers || {};
-  const hostHeader = (
-    headers["x-forwarded-host"] ||
-    headers["x-original-host"] ||
-    headers["origin"] ||
-    headers["referer"] ||
-    headers["host"]
-  ) as string | undefined;
-
-  let host: string | undefined = undefined;
-  if (hostHeader) {
-    if (hostHeader.startsWith("http://") || hostHeader.startsWith("https://")) {
-      try {
-        host = new URL(hostHeader).host;
-      } catch {}
-    } else {
-      host = hostHeader.split(",")[0].trim();
-    }
-  }
-
-  const verification = await AuthService.verifyPasskeyRegistration(user, input.response, challenge, host);
   if (!verification.verified) {
     throw new Error("Passkey verification failed.");
   }

@@ -1,5 +1,7 @@
 "use client";
 
+import { setSessionTokens, clearSession } from "./session";
+
 export interface StoredAccount {
   userId: string;
   email: string;
@@ -64,7 +66,9 @@ export function getActiveAccount(): StoredAccount | null {
 export function saveAccount(account: StoredAccount): void {
   if (typeof window === "undefined") return;
   const accounts = getStoredAccounts();
-  const existingIndex = accounts.findIndex((a) => a.userId === account.userId || a.email.toLowerCase() === account.email.toLowerCase());
+  const existingIndex = accounts.findIndex(
+    (a) => a.userId === account.userId || a.email.toLowerCase() === account.email.toLowerCase(),
+  );
 
   const accountToSave: StoredAccount = {
     ...account,
@@ -80,7 +84,7 @@ export function saveAccount(account: StoredAccount): void {
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
   localStorage.setItem(ACTIVE_KEY, accountToSave.userId);
-  localStorage.setItem(TOKEN_KEY, accountToSave.token);
+  setSessionTokens(accountToSave.token);
 }
 
 export function switchAccount(userId: string): StoredAccount | null {
@@ -92,7 +96,7 @@ export function switchAccount(userId: string): StoredAccount | null {
   target.lastActive = Date.now();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
   localStorage.setItem(ACTIVE_KEY, target.userId);
-  localStorage.setItem(TOKEN_KEY, target.token);
+  setSessionTokens(target.token);
   return target;
 }
 
@@ -106,11 +110,10 @@ export function removeAccount(userId: string): StoredAccount | null {
     if (accounts.length > 0) {
       const next = accounts[0];
       localStorage.setItem(ACTIVE_KEY, next.userId);
-      localStorage.setItem(TOKEN_KEY, next.token);
+      setSessionTokens(next.token);
       return next;
     } else {
-      localStorage.removeItem(ACTIVE_KEY);
-      localStorage.removeItem(TOKEN_KEY);
+      clearSession();
       return null;
     }
   }
@@ -118,8 +121,5 @@ export function removeAccount(userId: string): StoredAccount | null {
 }
 
 export function clearAllAccounts(): void {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(ACTIVE_KEY);
-  localStorage.removeItem(TOKEN_KEY);
+  clearSession();
 }

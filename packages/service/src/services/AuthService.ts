@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import argon2 from "argon2";
 import { SignJWT, jwtVerify } from "jose";
 import {
@@ -8,7 +9,17 @@ import {
   type RegistrationResponseJSON,
   type AuthenticationResponseJSON,
 } from "@simplewebauthn/server";
-import { UserModel, CredentialModel, OrganizationModel, type IUser, type ICredential } from "@cellsinbox/db";
+import {
+  UserModel,
+  CredentialModel,
+  OrganizationModel,
+  AuthChallengeModel,
+  type IUser,
+  type ICredential,
+  type IAuthChallenge,
+  type AuthChallengeType,
+  Types,
+} from "@cellsinbox/db";
 import { authenticator } from "otplib";
 import { env } from "@cellsinbox/env";
 
@@ -24,6 +35,7 @@ export interface TokenPayload {
   email: string;
   role: string;
   status: string;
+  tokenVersion: number;
 }
 
 export class AuthService {
@@ -43,15 +55,19 @@ export class AuthService {
       email: user.email,
       role: user.role,
       status: user.status,
+      tokenVersion: user.tokenVersion || 1,
     };
 
-    const accessToken = await new SignJWT(payload as Record<string, any>)
+    const accessToken = await new SignJWT(payload as unknown as Record<string, any>)
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
       .setExpirationTime(env.JWT_EXPIRES_IN ? `${env.JWT_EXPIRES_IN}s` : "24h")
       .sign(this.getJwtSecret());
 
-    const refreshToken = await new SignJWT({ userId: user._id.toString() })
+    const refreshToken = await new SignJWT({
+      userId: user._id.toString(),
+      tokenVersion: user.tokenVersion || 1,
+    })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
       .setExpirationTime(env.JWT_REFRESH_EXPIRES_IN ? `${env.JWT_REFRESH_EXPIRES_IN}s` : "90d")
@@ -64,6 +80,106 @@ export class AuthService {
     const { payload } = await jwtVerify(token, this.getJwtSecret());
     return payload as unknown as TokenPayload;
   }
+
+  static async revokeUserSessions(userId: string): Promise<void> {
+    await UserModel.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } });
+  }
+
+  // --- AuthChallenge Engine ---
+
+  static async createAuthChallenge(params: {
+    userId?: string | Types.ObjectId;
+    type: AuthChallengeType;
+    factorsRequired?: string[];
+    passkeyChallenge?: string;
+    totpSecretPending?: string;
+    maxAttempts?: number;
+    expiresInSeconds?: number;
+  }): Promise<{ challengeToken: string; expiresAt: Date }> {
+    const challengeToken = crypto.randomBytes(32).toString("hex");
+    const challengeHash = crypto.createHash("sha256").update(challengeToken).digest("hex");
+    const expiresIn = params.expiresInSeconds || 300; // 5 minutes default
+    const expiresAt = new Date(Date.now() + expiresIn * 1000);
+
+    await AuthChallengeModel.create({
+      userId: params.userId ? (typeof params.userId === "string" ? new Types.ObjectId(params.userId) : params.userId) : undefined,
+      challengeHash,
+      type: params.type,
+      status: "PENDING",
+      factorsRequired: params.factorsRequired || [],
+      factorsVerified: [],
+      passkeyChallenge: params.passkeyChallenge,
+      totpSecretPending: params.totpSecretPending,
+      attempts: 0,
+      maxAttempts: params.maxAttempts || 5,
+      expiresAt,
+    });
+
+    return { challengeToken, expiresAt };
+  }
+
+  static async claimPendingChallenge(
+    challengeToken: string,
+    expectedType: AuthChallengeType,
+  ): Promise<IAuthChallenge> {
+    if (!challengeToken || typeof challengeToken !== "string" || challengeToken.trim().length < 16) {
+      throw new Error("Invalid or missing authentication challenge.");
+    }
+
+    const cleanToken = challengeToken.trim();
+    const challengeHash = crypto.createHash("sha256").update(cleanToken).digest("hex");
+    const now = new Date();
+
+    // Atomic find and increment attempt count while ensuring challenge is PENDING, not expired, and attempts < maxAttempts
+    const challenge = await AuthChallengeModel.findOneAndUpdate(
+      {
+        challengeHash,
+        status: "PENDING",
+        expiresAt: { $gt: now },
+        attempts: { $lt: 5 },
+      },
+      {
+        $inc: { attempts: 1 },
+      },
+      {
+        new: true,
+        select: "+totpSecretPending",
+      },
+    );
+
+    if (!challenge) {
+      const existing = await AuthChallengeModel.findOne({ challengeHash });
+      if (!existing) {
+        throw new Error("Authentication challenge expired or invalid. Please sign in again.");
+      }
+      if (existing.status === "CONSUMED") {
+        throw new Error("Authentication challenge already used. Please initiate a new login.");
+      }
+      if (existing.expiresAt <= now) {
+        throw new Error("Authentication challenge has expired. Please sign in again.");
+      }
+      if (existing.attempts >= existing.maxAttempts) {
+        throw new Error("Maximum verification attempts exceeded. Please initiate a new login.");
+      }
+      throw new Error("Authentication challenge invalid or expired.");
+    }
+
+    if (challenge.type !== expectedType) {
+      throw new Error(`Invalid challenge purpose: expected ${expectedType}`);
+    }
+
+    return challenge;
+  }
+
+  static async consumeChallenge(challengeId: Types.ObjectId | string): Promise<boolean> {
+    const res = await AuthChallengeModel.updateOne(
+      { _id: challengeId, status: "PENDING" },
+      { $set: { status: "CONSUMED", consumedAt: new Date() } },
+    );
+    return res.modifiedCount > 0;
+  }
+
+  // --- Password Validation ---
 
   static async validatePassword(email: string, passwordPlain: string): Promise<IUser> {
     const user = await UserModel.findOne({ email: email.toLowerCase().trim() });
@@ -105,24 +221,66 @@ export class AuthService {
     return { secret, otpauthUri };
   }
 
-  static async verifyTotpCode(userId: string, code: string): Promise<boolean> {
-    const cred = await CredentialModel.findOne({ userId, type: "TOTP" }).select("+secret");
+  // --- TOTP Challenge Verification (Step 2 of Login) ---
+
+  static async verifyTotpForChallenge(
+    challengeToken: string,
+    code: string,
+  ): Promise<{ user: IUser; tokens: AuthTokens }> {
+    const challenge = await this.claimPendingChallenge(challengeToken, "MFA_LOGIN");
+
+    if (!challenge.userId) {
+      throw new Error("Authentication challenge has no associated user.");
+    }
+
+    const user = await UserModel.findById(challenge.userId);
+    if (!user) {
+      throw new Error("User account associated with challenge no longer exists.");
+    }
+
+    if (user.status !== "ACTIVE") {
+      throw new Error(`Account is ${user.status.toLowerCase()}. Access denied.`);
+    }
+
+    if (user.role !== "PLATFORM_ADMIN") {
+      const org = await OrganizationModel.findById(user.organizationId);
+      if (!org || org.status === "SUSPENDED") {
+        throw new Error("This organization has been suspended by platform administration. Contact support.");
+      }
+    }
+
+    const cred = await CredentialModel.findOne({ userId: user._id, type: "TOTP" }).select("+secret");
     if (!cred || !cred.secret) {
       throw new Error("No TOTP authenticator enrolled for this account.");
     }
 
-    const isValid = authenticator.check(code, cred.secret);
-    if (isValid) {
-      cred.lastUsedAt = new Date();
-      await cred.save();
+    const delta = authenticator.checkDelta(code, cred.secret);
+    if (delta === null) {
+      throw new Error("Invalid 6-digit verification code.");
     }
-    return isValid;
+
+    const currentStep = Math.floor(Date.now() / 1000 / 30);
+    const codeStep = currentStep + delta;
+
+    if (cred.lastUsedTimeStep && codeStep <= cred.lastUsedTimeStep) {
+      throw new Error("TOTP code already used. Please wait for the next 30-second code.");
+    }
+
+    cred.lastUsedTimeStep = codeStep;
+    cred.lastUsedAt = new Date();
+    await cred.save();
+
+    await this.consumeChallenge(challenge._id);
+
+    const tokens = await this.generateTokens(user);
+    return { user, tokens };
   }
 
+  // --- Onboarding Completion ---
+
   static async completeFirstLoginSecuritySetup(data: {
-    userId: string;
+    challengeToken: string;
     newPassword?: string;
-    totpSecret?: string;
     totpToken?: string;
     passkeyCredential?: {
       credentialId: string;
@@ -130,9 +288,26 @@ export class AuthService {
       counter: number;
     };
   }): Promise<{ user: IUser; tokens: AuthTokens }> {
-    const user = await UserModel.findById(data.userId);
+    const challenge = await this.claimPendingChallenge(data.challengeToken, "FIRST_LOGIN_ONBOARDING");
+
+    if (!challenge.userId) {
+      throw new Error("Onboarding challenge is missing user association.");
+    }
+
+    const user = await UserModel.findById(challenge.userId);
     if (!user) {
       throw new Error("User not found.");
+    }
+
+    if (user.status !== "PENDING_SECURITY_SETUP") {
+      throw new Error("Account has already completed security setup. Please sign in normally.");
+    }
+
+    if (user.role !== "PLATFORM_ADMIN") {
+      const org = await OrganizationModel.findById(user.organizationId);
+      if (!org || org.status === "SUSPENDED") {
+        throw new Error("This organization has been suspended by platform administration. Contact support.");
+      }
     }
 
     // Must enroll at least one 2FA method
@@ -141,16 +316,27 @@ export class AuthService {
     }
 
     // Verify and save TOTP if provided
-    if (data.totpSecret && data.totpToken) {
-      const isValid = authenticator.check(data.totpToken, data.totpSecret);
-      if (!isValid) {
+    if (data.totpToken) {
+      const secret = challenge.totpSecretPending;
+      if (!secret) {
+        throw new Error("No pending TOTP secret found in onboarding challenge.");
+      }
+
+      const delta = authenticator.checkDelta(data.totpToken, secret);
+      if (delta === null) {
         throw new Error("Invalid TOTP verification code. Please scan the QR code and enter the 6 digits.");
       }
+
+      const currentStep = Math.floor(Date.now() / 1000 / 30);
+      const codeStep = currentStep + delta;
 
       await CredentialModel.create({
         userId: user._id,
         type: "TOTP",
-        secret: data.totpSecret,
+        secret,
+        name: "Authenticator App (TOTP)",
+        lastUsedTimeStep: codeStep,
+        lastUsedAt: new Date(),
       });
     }
 
@@ -171,9 +357,13 @@ export class AuthService {
     }
 
     user.status = "ACTIVE";
+    user.twoFactorEnforced = true;
+    user.tokenVersion = (user.tokenVersion || 1) + 1;
     const savedUser = await user.save();
-    const tokens = await this.generateTokens(savedUser);
 
+    await this.consumeChallenge(challenge._id);
+
+    const tokens = await this.generateTokens(savedUser);
     return { user: savedUser, tokens };
   }
 
@@ -218,21 +408,55 @@ export class AuthService {
       },
     });
 
-    return options;
+    const { challengeToken } = await this.createAuthChallenge({
+      userId: user._id,
+      type: "PASSKEY_REG",
+      passkeyChallenge: options.challenge,
+    });
+
+    return { options, challengeToken };
   }
 
   static async verifyPasskeyRegistration(
     user: IUser,
     response: RegistrationResponseJSON,
-    expectedChallenge: string,
+    challengeToken?: string,
     host?: string,
   ) {
+    let challenge: IAuthChallenge | null = null;
+    if (challengeToken && challengeToken.trim().length >= 16) {
+      challenge = await this.claimPendingChallenge(challengeToken, "PASSKEY_REG");
+    } else {
+      challenge = await AuthChallengeModel.findOneAndUpdate(
+        {
+          userId: user._id,
+          type: "PASSKEY_REG",
+          status: "PENDING",
+          expiresAt: { $gt: new Date() },
+          attempts: { $lt: 5 },
+        },
+        { $inc: { attempts: 1 } },
+        { new: true, sort: { createdAt: -1 } },
+      );
+    }
+
+    if (!challenge) {
+      throw new Error("Passkey registration challenge expired or not found. Please retry.");
+    }
+
+    if (!challenge.userId || challenge.userId.toString() !== user._id.toString()) {
+      throw new Error("Passkey registration challenge user mismatch.");
+    }
+    if (!challenge.passkeyChallenge) {
+      throw new Error("Passkey registration challenge data missing.");
+    }
+
     const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
     const expectedRPID = cleanHost;
 
     const verification = await verifyRegistrationResponse({
       response,
-      expectedChallenge,
+      expectedChallenge: challenge.passkeyChallenge,
       expectedOrigin,
       expectedRPID,
     });
@@ -247,6 +471,9 @@ export class AuthService {
         publicKey: Buffer.from(credential.publicKey).toString("base64"),
         counter: credential.counter,
       });
+
+      await this.consumeChallenge(challenge._id);
+      await this.revokeUserSessions(user._id.toString());
     }
 
     return verification;
@@ -270,20 +497,26 @@ export class AuthService {
       userVerification: "preferred",
     });
 
-    return options;
+    const { challengeToken } = await this.createAuthChallenge({
+      userId: user ? user._id : undefined,
+      type: "PASSKEY_AUTH",
+      passkeyChallenge: options.challenge,
+    });
+
+    return { options, challengeToken };
   }
 
   static async verifyPasskeyAuthentication(
-    user: IUser,
     response: AuthenticationResponseJSON,
-    expectedChallenge: string,
+    challengeToken: string,
     host?: string,
-  ) {
-    const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
-    const expectedRPID = cleanHost;
+  ): Promise<{ user: IUser; tokens: AuthTokens; verification: any }> {
+    const challenge = await this.claimPendingChallenge(challengeToken, "PASSKEY_AUTH");
+    if (!challenge.passkeyChallenge) {
+      throw new Error("Passkey authentication challenge data missing.");
+    }
 
     const cred = await CredentialModel.findOne({
-      userId: user._id,
       credentialId: response.id,
       type: "PASSKEY",
     });
@@ -292,9 +525,28 @@ export class AuthService {
       throw new Error("Passkey credential not registered for this account.");
     }
 
+    const user = await UserModel.findById(cred.userId);
+    if (!user) {
+      throw new Error("User associated with this Passkey not found.");
+    }
+
+    if (user.status !== "ACTIVE") {
+      throw new Error(`Account is ${user.status.toLowerCase()}. Access denied.`);
+    }
+
+    if (user.role !== "PLATFORM_ADMIN") {
+      const org = await OrganizationModel.findById(user.organizationId);
+      if (org && org.status === "SUSPENDED") {
+        throw new Error("This organization has been suspended by platform administration. Contact support.");
+      }
+    }
+
+    const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
+    const expectedRPID = cleanHost;
+
     const verification = await verifyAuthenticationResponse({
       response,
-      expectedChallenge,
+      expectedChallenge: challenge.passkeyChallenge,
       expectedOrigin,
       expectedRPID,
       credential: {
@@ -308,52 +560,42 @@ export class AuthService {
       cred.counter = verification.authenticationInfo.newCounter;
       cred.lastUsedAt = new Date();
       await cred.save();
+
+      await this.consumeChallenge(challenge._id);
+      const tokens = await this.generateTokens(user);
+      return { user, tokens, verification };
     }
 
-    return verification;
+    throw new Error("Passkey authentication signature could not be verified.");
   }
 
   // --- User-facing Security & Passkeys Management ---
 
-  private static challenges = new Map<string, { challenge: string; expiresAt: number }>();
-
-  static setChallenge(key: string, challenge: string): void {
-    this.challenges.set(key, {
-      challenge,
-      expiresAt: Date.now() + 5 * 60 * 1000,
-    });
-  }
-
-  static getChallenge(key: string): string | null {
-    const entry = this.challenges.get(key);
-    if (!entry) return null;
-    if (Date.now() > entry.expiresAt) {
-      this.challenges.delete(key);
-      return null;
-    }
-    this.challenges.delete(key);
-    return entry.challenge;
-  }
-
   static async enableUserTotp(userId: string, secret: string, code: string): Promise<boolean> {
-    const isValid = authenticator.check(code, secret);
-    if (!isValid) {
+    const delta = authenticator.checkDelta(code, secret);
+    if (delta === null) {
       throw new Error("Invalid 6-digit verification code. Please check your authenticator app.");
     }
+
     const user = await UserModel.findById(userId);
     if (!user) throw new Error("User not found.");
+
+    const currentStep = Math.floor(Date.now() / 1000 / 30);
+    const codeStep = currentStep + delta;
 
     await CredentialModel.findOneAndUpdate(
       { userId: user._id, type: "TOTP" },
       {
         secret,
         name: "Authenticator App (TOTP)",
+        lastUsedTimeStep: codeStep,
         lastUsedAt: new Date(),
       },
       { upsert: true, new: true },
     );
 
     user.twoFactorEnforced = true;
+    user.tokenVersion = (user.tokenVersion || 1) + 1;
     await user.save();
     return true;
   }
@@ -372,8 +614,9 @@ export class AuthService {
     const remainingPasskeys = await CredentialModel.countDocuments({ userId: user._id, type: "PASSKEY" });
     if (remainingPasskeys === 0) {
       user.twoFactorEnforced = false;
-      await user.save();
     }
+    user.tokenVersion = (user.tokenVersion || 1) + 1;
+    await user.save();
     return true;
   }
 
@@ -421,8 +664,9 @@ export class AuthService {
     const remainingPasskeys = await CredentialModel.countDocuments({ userId: user._id, type: "PASSKEY" });
     if (remainingTotp === 0 && remainingPasskeys === 0) {
       user.twoFactorEnforced = false;
-      await user.save();
     }
+    user.tokenVersion = (user.tokenVersion || 1) + 1;
+    await user.save();
     return true;
   }
 }
