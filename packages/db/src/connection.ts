@@ -29,6 +29,19 @@ export async function connectToDatabase(
   });
 
   cachedConnection = conn.connection;
+
+  try {
+    const col = conn.connection.collection("mailbox_states");
+    const indexes = await col.indexes();
+    const hasOldIndex = indexes.some((idx) => idx.name === "userId_1_messageId_1");
+    if (hasOldIndex) {
+      await col.dropIndex("userId_1_messageId_1");
+      console.log("[DB] Dropped legacy index userId_1_messageId_1 on mailbox_states");
+    }
+  } catch {
+    // Ignore if collection doesn't exist yet
+  }
+
   return cachedConnection;
 }
 
