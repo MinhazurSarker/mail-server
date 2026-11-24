@@ -11,4 +11,5 @@ export * from "./services/MtaService.js";
 export * from "./services/ContactService.js";
 export * from "./services/CalendarService.js";
 export * from "./services/TemplateService.js";
+export * from "./migrations/migrate_storage_blobs.js";
 export * from "./seeder.js";

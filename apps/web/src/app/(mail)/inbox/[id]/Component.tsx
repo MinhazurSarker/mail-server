@@ -31,6 +31,7 @@ import {
 import { Reply } from "lucide-react";
 import { rpcCall } from "@/lib/api";
 import SafeEmailViewer from "@/components/support/email/safe-email-viewer";
+import { sanitizeEmailHtml } from "@/lib/sanitize-email";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -136,12 +137,13 @@ export default function EmailDetailComponent({
       throw new Error("Attachment identifier missing");
     }
 
+    const msgId = email.id || email._id ? String(email.id || email._id) : undefined;
     const res = await rpcCall<{
       filename: string;
       contentType: string;
       data: string;
     }>("mail", "attachment-content", {
-      messageId: email.id || email._id,
+      ...(msgId ? { messageId: msgId } : {}),
       attachmentId: attId,
     });
 
@@ -154,6 +156,21 @@ export default function EmailDetailComponent({
     for (let i = 0; i < byteChars.length; i++) {
       byteNums[i] = byteChars.charCodeAt(i);
     }
+    const isSvg =
+      (att.contentType && att.contentType.includes("svg")) ||
+      (att.filename && att.filename.toLowerCase().endsWith(".svg"));
+    if (isSvg) {
+      try {
+        const svgRaw = new TextDecoder().decode(byteNums);
+        const cleanSvg = sanitizeEmailHtml(svgRaw);
+        const cleanBytes = new TextEncoder().encode(cleanSvg);
+        const blob = new Blob([cleanBytes], { type: "image/svg+xml" });
+        return { url: URL.createObjectURL(blob), blob };
+      } catch (err) {
+        console.warn("SVG sanitization fallback to plain blob:", err);
+      }
+    }
+
     const blob = new Blob([byteNums], {
       type: res.contentType || att.contentType || "application/octet-stream",
     });
@@ -259,19 +276,24 @@ export default function EmailDetailComponent({
 
   return (
     <div className="space-y-6">
-      {/* Top Breadcrumb & Action Toolbar */}
+      {/* Top Action Toolbar & Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <PageBreadcrumb pageTitle={email.subject || "(no subject)"} />
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.back()}
-            className="gap-2 text-xs"
-          >
-            <ArrowLeftIcon className="size-4" />
-            Back
-          </Button>
+        <div className="flex items-center gap-3 min-w-0">
+          <Link href="/inbox">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 text-xs shrink-0 cursor-pointer"
+            >
+              <ArrowLeftIcon className="size-4" />
+              Back to Inbox
+            </Button>
+          </Link>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white truncate">
+            {email.subject || "(no subject)"}
+          </h2>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
           <Button
             variant="outline"
             size="sm"

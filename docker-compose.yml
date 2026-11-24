@@ -38,8 +38,10 @@ services:
       - MAIL_HELO_HOST=${MAIL_HELO_HOST:-mail.cellsweb.com}
       - SMTP_TLS_KEY_PATH=${SMTP_TLS_KEY_PATH:-/etc/dokploy/shared-certs/private/mail.cellsweb.com.key}
       - SMTP_TLS_CERT_PATH=${SMTP_TLS_CERT_PATH:-/etc/dokploy/shared-certs/certs/mail.cellsweb.com.crt}
+      - STORAGE_LOCAL_DIR=/app/storage/blobs
     volumes:
       - /etc/dokploy/shared-certs:/etc/dokploy/shared-certs:ro
+      - storage_data:/app/storage/blobs
     depends_on:
       mongodb:
         condition: service_healthy
@@ -64,6 +66,9 @@ services:
       - JWT_SECRET=${JWT_SECRET:-sovereign_secret_key_cellsweb_2026_super_secure}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-sovereign_refresh_secret_cellsweb_2026_super_secure}
       - FRONTEND_URL=${FRONTEND_URL:-https://webmail.cellsweb.com}
+      - STORAGE_LOCAL_DIR=/app/storage/blobs
+    volumes:
+      - storage_data:/app/storage/blobs
     depends_on:
       mongodb:
         condition: service_healthy
@@ -86,6 +91,9 @@ services:
       - MONGODB_URI=mongodb://mongodb:27017/cellsinbox
       - MAIL_HELO_HOST=${MAIL_HELO_HOST:-mail.cellsweb.com}
       - QUEUE_POLL_INTERVAL_MS=3000
+      - STORAGE_LOCAL_DIR=/app/storage/blobs
+    volumes:
+      - storage_data:/app/storage/blobs
     depends_on:
       mongodb:
         condition: service_healthy
@@ -122,4 +130,6 @@ networks:
 
 volumes:
   mongo_data:
+    driver: local
+  storage_data:
     driver: local

@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 
 export const inputSchema = Type.Object({
-  messageId: Type.String(),
+  messageId: Type.Optional(Type.String()),
   attachmentId: Type.String(),
 });
 

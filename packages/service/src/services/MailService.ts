@@ -546,22 +546,44 @@ export class MailService {
     messageId?: string;
     attachmentId: string;
   }): Promise<{ filename: string; contentType: string; data: string }> {
+    const user = await UserModel.findById(params.userId);
+    if (!user) {
+      throw new Error("Unauthorized: User not found");
+    }
+
     const attachment = await AttachmentModel.findById(params.attachmentId);
     if (!attachment) {
       throw new Error("Attachment not found");
     }
 
-    // Verify user has mailbox access to the message containing this attachment
+    // 1. Verify user has mailbox access to the message containing this attachment
     const state = await MailboxStateModel.findOne({
-      userId: params.userId,
+      userId: user._id,
       messageId: attachment.messageId,
     });
     if (!state) {
       throw new Error("Unauthorized: Message not in user mailbox");
     }
 
-    const user = await UserModel.findById(params.userId);
-    const org = user ? await OrganizationModel.findById(user.organizationId) : null;
+    // 2. Enforce strict tenant boundary: user organization must match message organization
+    const message = await MessageModel.findById(attachment.messageId);
+    if (!message) {
+      throw new Error("Underlying message entity not found");
+    }
+    if (
+      user.role !== "PLATFORM_ADMIN" &&
+      message.organizationId.toString() !== user.organizationId.toString()
+    ) {
+      throw new Error("Unauthorized: Cross-tenant attachment access denied");
+    }
+
+    // 3. Verify attachment key matches tenant prefix pattern
+    const expectedTenantPrefix = `attachments/${message.organizationId.toString()}/`;
+    if (!attachment.s3ObjectKey.startsWith(expectedTenantPrefix)) {
+      throw new Error("Security Violation: Attachment storage key tenant mismatch");
+    }
+
+    const org = await OrganizationModel.findById(user.organizationId);
     const storageConfig = (org?.storageConfig && org.storageConfig.provider)
       ? (org.storageConfig as any)
       : {

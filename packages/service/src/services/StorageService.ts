@@ -22,14 +22,47 @@ export class StorageService {
     });
   }
 
-  private static getLocalDir(config: StorageConfig): string {
-    return path.resolve(config.endpoint || "./storage/blobs");
+  public static getStorageRoot(config?: StorageConfig): string {
+    // 1. Explicit global environment variable takes highest precedence
+    if (process.env.STORAGE_LOCAL_DIR && process.env.STORAGE_LOCAL_DIR.trim().length > 0) {
+      return path.resolve(process.env.STORAGE_LOCAL_DIR.trim());
+    }
+    // 2. Tenant storageConfig endpoint if explicitly configured as an absolute path
+    if (config?.endpoint && path.isAbsolute(config.endpoint)) {
+      return path.resolve(config.endpoint);
+    }
+    // 3. Documented fallback storage root (single authoritative directory)
+    const fallbackBase = process.env.CELLSINBOX_STORAGE_ROOT || path.resolve(process.cwd(), "storage/blobs");
+    return path.resolve(fallbackBase);
+  }
+
+  public static resolveSecureLocalPath(config: StorageConfig, key: string): string {
+    const root = this.getStorageRoot(config);
+    // Disallow absolute paths or keys containing directory traversal segments
+    const normalized = path.normalize(key);
+    if (
+      path.isAbsolute(key) ||
+      path.isAbsolute(normalized) ||
+      normalized.startsWith("..") ||
+      normalized.split(path.sep).includes("..")
+    ) {
+      throw new Error(`Security Violation: Storage path escape detected for key: ${key}`);
+    }
+
+    const targetPath = path.resolve(root, normalized);
+
+    // Enforce strict containment within the configured storage root
+    const relative = path.relative(root, targetPath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(`Security Violation: Storage path escape detected for key: ${key}`);
+    }
+    return targetPath;
   }
 
   static async testConnection(config: StorageConfig): Promise<boolean> {
     if (config.provider === "local_fallback") {
       try {
-        const dir = this.getLocalDir(config);
+        const dir = this.getStorageRoot(config);
         await fs.mkdir(dir, { recursive: true });
         return true;
       } catch (err) {
@@ -54,7 +87,7 @@ export class StorageService {
     body: Buffer | Uint8Array | string,
   ): Promise<string> {
     if (!config.provider || config.provider === "local_fallback") {
-      const fullPath = path.join(this.getLocalDir(config), key);
+      const fullPath = this.resolveSecureLocalPath(config, key);
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
       await fs.writeFile(fullPath, body);
       return key;
@@ -79,7 +112,7 @@ export class StorageService {
     contentType: string,
   ): Promise<string> {
     if (!config.provider || config.provider === "local_fallback") {
-      const fullPath = path.join(this.getLocalDir(config), key);
+      const fullPath = this.resolveSecureLocalPath(config, key);
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
       await fs.writeFile(fullPath, body);
       return key;
@@ -118,34 +151,32 @@ export class StorageService {
 
   static async getRawFile(config: StorageConfig, key: string): Promise<Buffer> {
     if (!config.provider || config.provider === "local_fallback") {
-      const primaryDir = this.getLocalDir(config);
-      const primaryPath = path.join(primaryDir, key);
+      const targetPath = this.resolveSecureLocalPath(config, key);
       try {
-        await fs.access(primaryPath);
-        return await fs.readFile(primaryPath);
-      } catch {
-        // Check candidate fallback directories if running across different package cwds
-        const candidateBases = [
-          path.resolve(process.cwd(), "storage/blobs"),
-          path.resolve(process.cwd(), "../storage/blobs"),
-          path.resolve(process.cwd(), "../../storage/blobs"),
-          path.resolve(process.cwd(), "../server/storage/blobs"),
-          path.resolve(process.cwd(), "../../apps/server/storage/blobs"),
-          path.resolve(process.cwd(), "../api-server/storage/blobs"),
-          path.resolve(process.cwd(), "../../apps/api-server/storage/blobs"),
-        ];
-
-        for (const base of candidateBases) {
-          const candidatePath = path.join(base, key);
-          try {
-            await fs.access(candidatePath);
-            return await fs.readFile(candidatePath);
-          } catch {
-            // continue search
+        return await fs.readFile(targetPath);
+      } catch (err: any) {
+        if (err?.code === "ENOENT") {
+          // Explicit documented legacy lookup: If LEGACY_STORAGE_DIR is set, check legacy root once
+          if (process.env.LEGACY_STORAGE_DIR && process.env.LEGACY_STORAGE_DIR.trim().length > 0) {
+            const legacyRoot = path.resolve(process.env.LEGACY_STORAGE_DIR.trim());
+            const safeKey = path.normalize(key).replace(/^(\.\.(\/|\\|$))+/, "").replace(/^[/\\]+/, "");
+            const legacyPath = path.resolve(legacyRoot, safeKey);
+            const relLegacy = path.relative(legacyRoot, legacyPath);
+            if (!relLegacy.startsWith("..") && !path.isAbsolute(relLegacy)) {
+              try {
+                const legacyBuf = await fs.readFile(legacyPath);
+                // Migrate to primary root so future reads are direct
+                await fs.mkdir(path.dirname(targetPath), { recursive: true });
+                await fs.writeFile(targetPath, legacyBuf);
+                return legacyBuf;
+              } catch {
+                // Not found in legacy location either
+              }
+            }
           }
+          throw new Error(`Attachment file not found at storage location: ${key}`);
         }
-
-        return await fs.readFile(primaryPath);
+        throw err;
       }
     }
 
