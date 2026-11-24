@@ -16,7 +16,7 @@ export const TemplateSchema = Type.Object({
 export type Template = Static<typeof TemplateSchema>;
 
 export const TemplateRecipientSchema = Type.Object({
-  to: Type.String({ format: "email" }),
+  to: Type.String({ minLength: 3 }),
   variables: Type.Record(Type.String(), Type.String()),
 });
 export type TemplateRecipient = Static<typeof TemplateRecipientSchema>;
