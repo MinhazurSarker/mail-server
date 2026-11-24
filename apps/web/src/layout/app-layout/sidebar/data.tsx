@@ -2,6 +2,7 @@ import {
   CalendarIcon,
   GearIcon,
   GlobeIcon,
+  KeyIcon,
   LayoutGridIcon,
   MailIcon,
   PageIcon,
@@ -50,6 +51,12 @@ export const supportItems: NavItem[] = [
     key: "users",
     name: "Users & Mailboxes",
     path: "/users",
+  },
+  {
+    icon: <KeyIcon className="size-6 stroke-[1.5px]" />,
+    key: "apiKeys",
+    name: "API Keys",
+    path: "/api-keys",
   },
   {
     icon: <TableIcon className="size-6 stroke-[1.5px]" />,

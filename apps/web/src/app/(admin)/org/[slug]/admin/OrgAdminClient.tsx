@@ -206,6 +206,17 @@ export default function TenantAdminPage({
   });
   const [creatingTemplate, setCreatingTemplate] = useState(false);
 
+  // API Key Management
+  const [showCreateKey, setShowCreateKey] = useState(false);
+  const [newKeyForm, setNewKeyForm] = useState({
+    name: "",
+    allowedDomains: [] as string[],
+    rateLimitPerMinute: 60,
+  });
+  const [creatingKey, setCreatingKey] = useState(false);
+  const [generatedSecretKey, setGeneratedSecretKey] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState(false);
+
   const [showCampaignModal, setShowCampaignModal] = useState(false);
   const [selectedCampaignTemplate, setSelectedCampaignTemplate] = useState<TemplateItem | null>(null);
   const [csvRawText, setCsvRawText] = useState("");
@@ -470,6 +481,37 @@ export default function TenantAdminPage({
       showToast(err.message || "Campaign dispatch failed.");
     } finally {
       setDispatchingCampaign(false);
+    }
+  };
+
+  const handleCreateApiKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newKeyForm.name.trim()) return;
+    setCreatingKey(true);
+    try {
+      const res = await rpcCall<{ apiKey: any; rawSecretKey: string }>("apiKey", "create", {
+        name: newKeyForm.name.trim(),
+        allowedDomains: newKeyForm.allowedDomains.length > 0 ? newKeyForm.allowedDomains : ["*"],
+        rateLimitPerMinute: Number(newKeyForm.rateLimitPerMinute) || 60,
+      });
+      setGeneratedSecretKey(res.rawSecretKey);
+      setApiKeys((prev) => [res.apiKey, ...prev]);
+      showToast("API Key created successfully.");
+    } catch (err: any) {
+      showToast(err.message || "Failed to create API key.");
+    } finally {
+      setCreatingKey(false);
+    }
+  };
+
+  const handleRevokeKey = async (apiKeyId: string) => {
+    if (!confirm("Are you sure you want to revoke this API key? Applications using it will immediately be rejected.")) return;
+    try {
+      await rpcCall("apiKey", "revoke", { apiKeyId });
+      setApiKeys((prev) => prev.filter((k) => k.id !== apiKeyId));
+      showToast("API Key revoked successfully.");
+    } catch (err: any) {
+      showToast(err.message || "Failed to revoke API key.");
     }
   };
 
@@ -1391,12 +1433,35 @@ export default function TenantAdminPage({
           {/* 8. API KEYS */}
           {activeTab === "apikeys" && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                   <h2 className="text-xl font-bold tracking-tight">SendGrid-Compatible API Keys</h2>
                   <p className="text-sm text-muted-foreground">
                     Generate programmatic Bearer tokens for external sending, transactional notifications, and templates.
                   </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Link href="/api-keys/new">
+                    <Button variant="outline" size="sm" className="gap-2 text-xs">
+                      Dedicated Page
+                    </Button>
+                  </Link>
+                  <Button
+                    onClick={() => {
+                      setGeneratedSecretKey(null);
+                      setNewKeyForm({
+                        name: "",
+                        allowedDomains: domains.length > 0 ? [domains[0].name] : ["*"],
+                        rateLimitPerMinute: 60,
+                      });
+                      setShowCreateKey(true);
+                    }}
+                    size="sm"
+                    className="gap-2 bg-brand-500 hover:bg-brand-600 text-white cursor-pointer shadow-sm"
+                  >
+                    <Plus className="size-4" />
+                    Generate API Key
+                  </Button>
                 </div>
               </div>
 
@@ -1408,6 +1473,7 @@ export default function TenantAdminPage({
                       <TableHead>Key Prefix</TableHead>
                       <TableHead>Allowed Domains</TableHead>
                       <TableHead>Rate Limit</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1415,14 +1481,53 @@ export default function TenantAdminPage({
                       <TableRow key={k.id}>
                         <TableCell className="font-medium text-sm">{k.name}</TableCell>
                         <TableCell className="font-mono text-xs">{k.keyPrefix}••••••••</TableCell>
-                        <TableCell className="font-mono text-xs">{k.allowedDomains.join(", ")}</TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {k.allowedDomains.includes("*") ? "All domains (*)" : k.allowedDomains.join(", ")}
+                        </TableCell>
                         <TableCell className="text-xs">{k.rateLimitPerMinute} req/min</TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRevokeKey(k.id)}
+                            className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 h-8 px-2 cursor-pointer"
+                            title="Revoke API Key"
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                     {apiKeys.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center py-8 text-muted-foreground text-xs">
-                          No programmatic API keys enrolled.
+                        <TableCell colSpan={5} className="text-center py-12 text-muted-foreground text-xs">
+                          <div className="flex flex-col items-center justify-center gap-3">
+                            <div className="p-3 rounded-full bg-brand-500/10 text-brand-500">
+                              <Key className="size-8" />
+                            </div>
+                            <div className="text-center">
+                              <p className="font-semibold text-sm text-foreground">No programmatic API keys enrolled</p>
+                              <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                                Generate a SendGrid v3 compatible API key to send transactional emails via REST or SMTP relay.
+                              </p>
+                            </div>
+                            <Button
+                              onClick={() => {
+                                setGeneratedSecretKey(null);
+                                setNewKeyForm({
+                                  name: "",
+                                  allowedDomains: domains.length > 0 ? [domains[0].name] : ["*"],
+                                  rateLimitPerMinute: 60,
+                                });
+                                setShowCreateKey(true);
+                              }}
+                              size="sm"
+                              className="mt-2 gap-2 bg-brand-500 hover:bg-brand-600 text-white cursor-pointer shadow-sm"
+                            >
+                              <Plus className="size-4" />
+                              Generate API Key
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     )}
@@ -1699,6 +1804,150 @@ export default function TenantAdminPage({
                 </Button>
               </CardFooter>
             </form>
+          </Card>
+        </div>
+      )}
+      {/* CREATE API KEY MODAL */}
+      {showCreateKey && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="w-full max-w-lg border-border bg-card shadow-2xl">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Key className="size-4 text-primary" />
+                {generatedSecretKey ? "API Key Generated Successfully" : "Generate SendGrid-Compatible API Key"}
+              </CardTitle>
+              <CardDescription className="text-xs">
+                {generatedSecretKey
+                  ? "Make sure to copy your API key now. For security reasons, it cannot be displayed again."
+                  : "Provision a cryptographically secure Bearer token for transactional mailing, webhooks, and SMTP relay."}
+              </CardDescription>
+            </CardHeader>
+            {generatedSecretKey ? (
+              <CardContent className="space-y-4">
+                <div className="p-3 bg-brand-50/50 dark:bg-brand-500/10 border border-brand-200 dark:border-brand-500/20 rounded-lg space-y-2">
+                  <Label className="text-xs font-semibold text-brand-600 dark:text-brand-400">
+                    Your Secret API Key
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      readOnly
+                      value={generatedSecretKey}
+                      className="font-mono text-xs bg-background select-all"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText(generatedSecretKey);
+                        setCopiedKey(true);
+                        setTimeout(() => setCopiedKey(false), 2000);
+                      }}
+                      className="gap-1.5 shrink-0"
+                    >
+                      {copiedKey ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+                      <span>{copiedKey ? "Copied" : "Copy"}</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Example cURL Usage (SendGrid compatible):</Label>
+                  <pre className="p-3 rounded-lg bg-zinc-950 text-zinc-100 font-mono text-[11px] overflow-x-auto">
+{`curl -X POST https://webmail.cellsweb.com/rpc \\
+  -H "Authorization: Bearer ${generatedSecretKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"namespace":"apiKey","functionName":"send","data":{"to":["recipient@example.com"],"subject":"Hello","text":"Hi from API"}}'`}
+                  </pre>
+                </div>
+              </CardContent>
+            ) : (
+              <form onSubmit={handleCreateApiKey}>
+                <CardContent className="space-y-4">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Key Name *</Label>
+                    <Input
+                      required
+                      value={newKeyForm.name}
+                      onChange={(e) => setNewKeyForm({ ...newKeyForm, name: e.target.value })}
+                      placeholder="e.g. Production Webhook Mailer"
+                      className="text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs">Allowed Sender Domain(s)</Label>
+                    <select
+                      className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewKeyForm({
+                          ...newKeyForm,
+                          allowedDomains: val === "*" ? ["*"] : [val],
+                        });
+                      }}
+                    >
+                      <option value="*">All Verified Domains (*)</option>
+                      {domains.map((d) => (
+                        <option key={d.id} value={d.name}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs">Rate Limit (requests / minute)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={newKeyForm.rateLimitPerMinute}
+                      onChange={(e) =>
+                        setNewKeyForm({
+                          ...newKeyForm,
+                          rateLimitPerMinute: parseInt(e.target.value) || 60,
+                        })
+                      }
+                      className="text-xs"
+                    />
+                  </div>
+                </CardContent>
+                <CardFooter className="flex justify-end gap-2 border-t border-border/40 pt-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowCreateKey(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={creatingKey || !newKeyForm.name.trim()}
+                    className="bg-brand-500 hover:bg-brand-600 text-white"
+                  >
+                    {creatingKey ? "Generating..." : "Generate Key"}
+                  </Button>
+                </CardFooter>
+              </form>
+            )}
+
+            {generatedSecretKey && (
+              <CardFooter className="flex justify-end border-t border-border/40 pt-3">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setShowCreateKey(false);
+                    setGeneratedSecretKey(null);
+                  }}
+                  className="bg-brand-500 hover:bg-brand-600 text-white"
+                >
+                  Done
+                </Button>
+              </CardFooter>
+            )}
           </Card>
         </div>
       )}
