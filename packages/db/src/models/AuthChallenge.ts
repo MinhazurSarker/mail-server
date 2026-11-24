@@ -17,6 +17,9 @@ export interface IAuthChallenge extends Document {
   factorsVerified: string[];
   passkeyChallenge?: string; // WebAuthn challenge string
   totpSecretPending?: string; // Pending secret for onboarding setup
+  userTokenVersion?: number; // User token version at challenge creation
+  expectedRPID?: string;
+  expectedOrigin?: string;
   attempts: number;
   maxAttempts: number;
   expiresAt: Date;
@@ -54,6 +57,9 @@ const AuthChallengeSchema = new Schema<IAuthChallenge>(
     factorsVerified: [{ type: String }],
     passkeyChallenge: { type: String },
     totpSecretPending: { type: String, select: false },
+    userTokenVersion: { type: Number },
+    expectedRPID: { type: String },
+    expectedOrigin: { type: String },
     attempts: { type: Number, default: 0 },
     maxAttempts: { type: Number, default: 5 },
     expiresAt: {

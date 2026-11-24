@@ -14,7 +14,8 @@ export const run = async (
     challengeToken: input.challengeToken,
     newPassword: input.newPassword,
     totpToken: input.totpToken,
-    passkeyCredential: input.passkeyCredential,
+    passkeyResponse: input.passkeyResponse,
+    passkeyCredential: input.passkeyCredential as any,
   });
 
   return {

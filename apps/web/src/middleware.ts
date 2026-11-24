@@ -15,6 +15,7 @@ const PROTECTED_ROUTES = [
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isReauth = request.nextUrl.searchParams.has("reauth");
 
   const isProtected = PROTECTED_ROUTES.some((prefix) =>
     pathname === prefix || pathname.startsWith(`${prefix}/`)
@@ -23,13 +24,20 @@ export function middleware(request: NextRequest) {
   const authCookie = request.cookies.get("authorization")?.value;
   const hasToken = Boolean(authCookie && authCookie.trim().length > 0);
 
+  // If redirected with reauth flag, clear authorization cookie and allow through to login
+  if (pathname === "/login" && isReauth) {
+    const response = NextResponse.next();
+    response.cookies.delete("authorization");
+    return response;
+  }
+
   if (isProtected && !hasToken) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  // If already authenticated and navigating to /login, redirect to /inbox
+  // If already authenticated and navigating to /login without reauth, redirect to /inbox
   if (pathname === "/login" && hasToken) {
     return NextResponse.redirect(new URL("/inbox", request.url));
   }

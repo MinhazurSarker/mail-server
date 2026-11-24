@@ -8,7 +8,7 @@ import {
   sanitizeEmailHtml,
   buildSandboxedEmailDocument,
   containsRemoteContent,
-} from "../src/lib/sanitize-email.ts";
+} from "../src/lib/sanitize-email";
 
 test("F03 Security: Strips active script tags completely", () => {
   const dirty = '<div>Hello<script>alert("XSS")</script> World</div>';

@@ -12,11 +12,12 @@ export const run = async (
   input: Input,
   _context: MiddlewareContext,
 ): Promise<Output> => {
-  // 1. If challengeToken is provided, retrieve pending secret bound to challenge
+  // Enforce server-bound challenge token
   if (input.challengeToken) {
     const challengeHash = crypto.createHash("sha256").update(input.challengeToken.trim()).digest("hex");
     const challenge = await AuthChallengeModel.findOne({
       challengeHash,
+      type: "FIRST_LOGIN_ONBOARDING",
       status: "PENDING",
       expiresAt: { $gt: new Date() },
     }).select("+totpSecretPending");
@@ -33,17 +34,6 @@ export const run = async (
     }
   }
 
-  // 2. Fallback to userId if user is pending setup
-  if (input.userId) {
-    const user = await UserService.getById(input.userId);
-    if (user && user.status === "PENDING_SECURITY_SETUP") {
-      const setup = AuthService.generateTotpSetup(user);
-      return {
-        secret: setup.secret,
-        otpauthUri: setup.otpauthUri,
-      };
-    }
-  }
-
-  throw new Error("Invalid or expired onboarding session. Please sign in again.");
+  // Reject unbound user ID requests (R1 & onboarding compatibility)
+  throw new Error("Onboarding requires an active login challenge. Please sign in with your credentials to start security setup.");
 };

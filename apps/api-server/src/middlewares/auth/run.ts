@@ -58,22 +58,20 @@ export const run: MiddlewareFn<AuthMiddlewareOptions> = async (
       }
 
       // Enforce token versioning (immediate session invalidation on logout / password / 2FA changes)
-      if (user.tokenVersion !== (payload.tokenVersion || 1)) {
+      const userVersion = user.tokenVersion || 1;
+      const payloadVersion = payload.tokenVersion || 1;
+      if (userVersion !== payloadVersion) {
         throw new AppError(
           ErrorCode.UNAUTHORIZED,
           "Session has been revoked. Please sign in again.",
         );
       }
 
-      // Enforce organization active status
-      if (user.role !== "PLATFORM_ADMIN" && user.organizationId) {
-        const org = await OrganizationModel.findById(user.organizationId);
-        if (org && org.status === "SUSPENDED") {
-          throw new AppError(
-            ErrorCode.FORBIDDEN,
-            "This organization has been suspended by platform administration. Contact support.",
-          );
-        }
+      // Enforce organization active status (R9)
+      try {
+        await AuthService.assertActiveTenant(user);
+      } catch (tenantErr: any) {
+        throw new AppError(ErrorCode.FORBIDDEN, tenantErr.message || "Organization access denied");
       }
 
       authContext = {
@@ -105,14 +103,11 @@ export const run: MiddlewareFn<AuthMiddlewareOptions> = async (
         );
       }
 
-      if (user.role !== "PLATFORM_ADMIN" && apiKey.organizationId) {
-        const org = await OrganizationModel.findById(apiKey.organizationId);
-        if (org && org.status === "SUSPENDED") {
-          throw new AppError(
-            ErrorCode.FORBIDDEN,
-            "This organization has been suspended by platform administration. Contact support.",
-          );
-        }
+      // Enforce organization active status for API Key owner (R9)
+      try {
+        await AuthService.assertActiveTenant(user);
+      } catch (tenantErr: any) {
+        throw new AppError(ErrorCode.FORBIDDEN, tenantErr.message || "Organization access denied");
       }
 
       authContext = {

@@ -1,28 +1,36 @@
-import { connectToDatabase, disconnectDatabase } from "@cellsinbox/db";
-import { OrganizationService, DomainService, UserService, AuthService } from "../src/index.js";
+import test from "node:test";
+import assert from "node:assert/strict";
 import { authenticator } from "otplib";
+import {
+  connectToTestDatabase,
+  cleanupTestDatabase,
+  CredentialModel,
+} from "@cellsinbox/db";
+import { OrganizationService, DomainService, UserService, AuthService } from "../dist/index.js";
 
-async function runTest() {
-  console.log("=== [TEST] Starting Phase 2 Authentication Flow Verification ===");
-  await connectToDatabase();
-  console.log("✓ Connected to MongoDB");
+const TEST_DB_NAME = "cellsinbox_test_auth_flow";
 
-  const orgSlug = `test-org-${Date.now()}`;
+test("End-to-End Authentication and Security Onboarding Flow", async (t) => {
+  await connectToTestDatabase(TEST_DB_NAME);
+  t.after(async () => {
+    await cleanupTestDatabase();
+  });
+
+  const orgSlug = `test-flow-${Date.now()}`;
   const domainName = `${orgSlug}.local`;
   const userEmail = `alice@${domainName}`;
 
-  // 1. Create Organization
+  // 1. Create Organization & Domain
   const org = await OrganizationService.createOrganization({
-    name: "Test Organization",
+    name: "Flow Test Organization",
     slug: orgSlug,
   });
-  console.log(`✓ Organization created: ${org.name} (id: ${org._id})`);
+  org.status = "ACTIVE";
+  await org.save();
 
-  // 2. Add Domain
   const domain = await DomainService.addDomain(org._id.toString(), domainName);
-  console.log(`✓ Domain added: ${domain.name} (DKIM selector: ${domain.dkimSelector})`);
 
-  // 3. Admin creates User with temporary password
+  // 2. Admin creates User with temporary password
   const { user, temporaryPassword } = await UserService.createUser({
     organizationId: org._id.toString(),
     domainId: domain._id.toString(),
@@ -30,60 +38,84 @@ async function runTest() {
     displayName: "Alice Tester",
     role: "MAILBOX_USER",
   });
-  console.log(`✓ User created: ${user.email} (Status: ${user.status}, Temp Pass: ${temporaryPassword})`);
 
-  if (user.status !== "PENDING_SECURITY_SETUP") {
-    throw new Error(`Expected status PENDING_SECURITY_SETUP, got: ${user.status}`);
-  }
+  assert.equal(user.status, "PENDING_SECURITY_SETUP");
 
-  // 4. User attempts first login with temporary password
+  // 3. User validates temporary password on first login
   const validatedUser = await AuthService.validatePassword(userEmail, temporaryPassword);
-  console.log(`✓ First login credential validation succeeded for: ${validatedUser.email}`);
+  assert.equal(validatedUser.status, "PENDING_SECURITY_SETUP");
 
-  // 5. Generate TOTP Setup Secret & URI
+  // 4. Generate TOTP Setup Secret
   const totpSetup = AuthService.generateTotpSetup(validatedUser);
-  console.log(`✓ TOTP Setup generated (Secret: ${totpSetup.secret})`);
+  assert.ok(totpSetup.secret, "TOTP secret must be generated");
+
+  // 5. Create server-bound FIRST_LOGIN_ONBOARDING challenge
+  const { challengeToken } = await AuthService.createAuthChallenge({
+    userId: validatedUser._id,
+    type: "FIRST_LOGIN_ONBOARDING",
+    factorsRequired: ["TOTP"],
+    totpSecretPending: totpSetup.secret,
+    expiresInSeconds: 300,
+  });
 
   // 6. Complete Mandatory Onboarding
   const validToken = authenticator.generate(totpSetup.secret);
   const permanentPassword = "PermanentPassword2026!";
 
   const onboardingResult = await AuthService.completeFirstLoginSecuritySetup({
-    userId: validatedUser._id.toString(),
+    challengeToken,
     newPassword: permanentPassword,
-    totpSecret: totpSetup.secret,
     totpToken: validToken,
   });
 
-  console.log(`✓ Onboarding completed! User status: ${onboardingResult.user.status}`);
-  if (onboardingResult.user.status !== "ACTIVE") {
-    throw new Error(`Expected status ACTIVE, got: ${onboardingResult.user.status}`);
-  }
+  assert.equal(onboardingResult.user.status, "ACTIVE");
+  assert.equal(onboardingResult.user.twoFactorEnforced, true);
+  assert.equal(onboardingResult.user.tokenVersion, 2);
+  assert.ok(onboardingResult.tokens.accessToken);
 
-  // 7. Verify JWT Tokens
+  // 7. Verify Access Token
   const verifiedToken = await AuthService.verifyAccessToken(onboardingResult.tokens.accessToken);
-  console.log(`✓ Access Token verified: email=${verifiedToken.email}, role=${verifiedToken.role}`);
+  assert.equal(verifiedToken.email, userEmail);
+  assert.equal(verifiedToken.role, "MAILBOX_USER");
+  assert.equal(verifiedToken.tokenVersion, 2);
 
-  // 8. Subsequent Login with New Password & TOTP
+  // 8. Subsequent Login Step 1: Password validation
   const subsequentUser = await AuthService.validatePassword(userEmail, permanentPassword);
-  console.log(`✓ Subsequent password login succeeded with new permanent password`);
+  assert.equal(subsequentUser.status, "ACTIVE");
+  assert.equal(subsequentUser.twoFactorEnforced, true);
 
-  const secondValidToken = authenticator.generate(totpSetup.secret);
-  const is2FAValid = await AuthService.verifyTotpCode(subsequentUser._id.toString(), secondValidToken);
-  console.log(`✓ 2-Step Verification TOTP challenge validated: ${is2FAValid}`);
+  // 9. Subsequent Login Step 2: MFA Challenge Creation and Verification
+  const { challengeToken: mfaChallengeToken } = await AuthService.createAuthChallenge({
+    userId: subsequentUser._id,
+    type: "MFA_LOGIN",
+    factorsRequired: ["TOTP"],
+    expiresInSeconds: 300,
+  });
 
-  if (!is2FAValid) {
-    throw new Error("2FA code validation failed");
-  }
+  // Replaying the TOTP code in the same 30s window without advancing step must fail (R2)
+  await assert.rejects(
+    async () => {
+      await AuthService.verifyTotpForChallenge(mfaChallengeToken, validToken);
+    },
+    /TOTP code already used/,
+    "Replaying same TOTP code in the same 30s window must fail (R2)",
+  );
 
-  const finalTokens = await AuthService.generateTokens(subsequentUser);
-  console.log(`✓ Final active session tokens issued: accessToken length = ${finalTokens.accessToken.length}`);
+  // Advance credential lastUsedTimeStep to step - 1 to simulate next time step
+  const currentStep = Math.floor(Date.now() / 1000 / 30);
+  await CredentialModel.updateOne(
+    { userId: subsequentUser._id, type: "TOTP" },
+    { $set: { lastUsedTimeStep: currentStep - 1 } },
+  );
 
-  await disconnectDatabase();
-  console.log("=== [SUCCESS] Phase 2 Authentication & Mandatory Onboarding Fully Verified! ===");
-}
+  const mfaResult = await AuthService.verifyTotpForChallenge(mfaChallengeToken, validToken);
+  assert.equal(mfaResult.user._id.toString(), subsequentUser._id.toString());
+  assert.ok(mfaResult.tokens.accessToken);
 
-runTest().catch((err) => {
-  console.error("Test failed with error:", err);
-  process.exit(1);
+  const verifiedSubsequentToken = await AuthService.verifyAccessToken(mfaResult.tokens.accessToken);
+  assert.equal(verifiedSubsequentToken.userId, subsequentUser._id.toString());
+  assert.equal(verifiedSubsequentToken.tokenVersion, 2);
+
+  // Cleanup
+  await cleanupTestDatabase();
 });

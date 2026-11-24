@@ -14,6 +14,7 @@ export const inputSchema = Type.Object({
   newPassword: Type.Optional(Type.String({ minLength: 8 })),
   totpSecret: Type.Optional(Type.String()),
   totpToken: Type.Optional(Type.String({ minLength: 6, maxLength: 6 })),
+  passkeyResponse: Type.Optional(Type.Any({ description: "WebAuthn registration response" })),
   passkeyCredential: Type.Optional(
     Type.Object({
       credentialId: Type.String(),

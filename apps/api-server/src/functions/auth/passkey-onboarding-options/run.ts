@@ -10,10 +10,8 @@ export const run = async (
   input: Input,
   context: MiddlewareContext,
 ): Promise<Output> => {
-  const host =
-    (context.headers?.["x-forwarded-host"] as string) ||
-    (context.headers?.host as string) ||
-    undefined;
+  const headers = (context.headers || {}) as Record<string, string | undefined>;
+  const host = headers["x-forwarded-host"] || headers["host"] || undefined;
 
   const result = await AuthService.generateOnboardingPasskeyOptions(
     input.challengeToken,
