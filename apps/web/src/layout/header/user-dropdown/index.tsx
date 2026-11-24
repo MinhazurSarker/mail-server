@@ -19,9 +19,11 @@ import {
 } from "@/icons";
 import { cn } from "@/utils";
 import { useEffect, useState } from "react";
+import { rpcCall } from "@/lib/api";
 import {
   getActiveAccount,
   getStoredAccounts,
+  saveAccount,
   switchAccount,
   removeAccount,
   type StoredAccount,
@@ -34,8 +36,48 @@ export default function UserDropdown() {
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
 
   useEffect(() => {
-    setActiveAccount(getActiveAccount());
-    setAccounts(getStoredAccounts());
+    const current = getActiveAccount();
+    if (current) {
+      setActiveAccount(current);
+      setAccounts(getStoredAccounts());
+    } else {
+      // Auto-recover session from token if available
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("accessToken") ||
+            document.cookie.match(/(?:^|;\s*)authorization=(?:Bearer\s+)?([^;]+)/)?.[1]
+          : null;
+
+      if (token) {
+        rpcCall<{
+          userId: string;
+          email: string;
+          displayName?: string;
+          role: string;
+          orgSlug?: string;
+          orgName?: string;
+          organizationId?: string;
+        }>("auth", "me", {}, { Authorization: `Bearer ${token}` })
+          .then((me) => {
+            if (me && me.email) {
+              const recovered: StoredAccount = {
+                userId: me.userId,
+                email: me.email,
+                displayName: me.displayName || me.email.split("@")[0],
+                role: me.role,
+                orgSlug: me.orgSlug,
+                orgName: me.orgName,
+                organizationId: me.organizationId,
+                token,
+              };
+              saveAccount(recovered);
+              setActiveAccount(recovered);
+              setAccounts(getStoredAccounts());
+            }
+          })
+          .catch(() => {});
+      }
+    }
   }, []);
 
   const handleSignOut = () => {
@@ -44,6 +86,8 @@ export default function UserDropdown() {
     }
     if (typeof window !== "undefined") {
       localStorage.removeItem("accessToken");
+      localStorage.removeItem("refreshToken");
+      localStorage.removeItem("activeAccountId");
       document.cookie = "authorization=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
     }
     router.push("/login");
@@ -54,9 +98,9 @@ export default function UserDropdown() {
     window.location.reload();
   };
 
-  const displayName = activeAccount?.displayName || activeAccount?.email?.split("@")[0] || "User";
-  const email = activeAccount?.email || "user@cellsweb.com";
-  const initial = displayName.charAt(0).toUpperCase();
+  const displayName = activeAccount?.displayName || activeAccount?.email?.split("@")[0] || "Account";
+  const email = activeAccount?.email || "";
+  const initial = (displayName || "A").charAt(0).toUpperCase();
   const isPlatformAdmin = activeAccount?.role === "PLATFORM_ADMIN" || activeAccount?.role === "SOVEREIGN_ADMIN";
   const orgSlug = activeAccount?.orgSlug || "cellsweb";
 

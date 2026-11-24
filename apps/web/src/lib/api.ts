@@ -3,14 +3,20 @@ import { createRpcClient } from "@cellsweb/rpc-client";
 export const API_BASE_URL =
   typeof window !== "undefined"
     ? window.location.origin
-    : (process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000");
+    : (process.env.INTERNAL_API_URL ||
+       process.env.NEXT_PUBLIC_API_URL ||
+       (process.env.NODE_ENV === "production" ? "http://api_server:4000" : "http://localhost:4001"));
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/i, "ws");
 
 export const rpc = createRpcClient({
   baseUrl: API_BASE_URL,
   defaultHeaders: (): Record<string, string> => {
     if (typeof window !== "undefined") {
-      const token = localStorage.getItem("accessToken");
+      let token = localStorage.getItem("accessToken");
+      if (!token) {
+        const match = document.cookie.match(/(?:^|;\s*)authorization=(?:Bearer\s+)?([^;]+)/);
+        if (match) token = match[1];
+      }
       if (token) {
         return {
           Authorization: `Bearer ${token}`,
@@ -27,10 +33,32 @@ export async function rpcCall<T = any>(
   data: any = {},
   headers?: Record<string, string>,
 ): Promise<T> {
-  return await rpc.request({
-    namespace,
-    functionName,
-    data,
-    headers,
-  });
+  try {
+    return await rpc.request({
+      namespace,
+      functionName,
+      data,
+      headers,
+    });
+  } catch (err: any) {
+    if (typeof window !== "undefined") {
+      const msg = (err?.message || "").toLowerCase();
+      if (
+        msg.includes("unauthorized") ||
+        msg.includes("jwt expired") ||
+        msg.includes("invalid token") ||
+        err?.status === 401
+      ) {
+        localStorage.removeItem("accessToken");
+        document.cookie = "authorization=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        if (
+          !window.location.pathname.startsWith("/login") &&
+          !window.location.pathname.startsWith("/onboarding")
+        ) {
+          window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+        }
+      }
+    }
+    throw err;
+  }
 }

@@ -5,12 +5,13 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { startAuthentication } from "@simplewebauthn/browser";
 import { rpcCall } from "@/lib/api";
+import { saveAccount } from "@/lib/account-store";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Mail, KeyRound, AlertCircle, Fingerprint, Loader2 } from "lucide-react";
+import { Mail, KeyRound, AlertCircle, Fingerprint, Loader2, ArrowLeft } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -48,6 +49,51 @@ export default function LoginPage() {
     }
   }, []);
 
+  const syncAuthSession = async (
+    token: string,
+    refreshToken?: string,
+    fallbackUser?: { userId: string; email: string; role?: string; displayName?: string },
+  ) => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("accessToken", token);
+      if (refreshToken) localStorage.setItem("refreshToken", refreshToken);
+
+      const isSecure = window.location.protocol === "https:";
+      document.cookie = `authorization=Bearer ${token}; path=/; max-age=604800; SameSite=Lax${isSecure ? "; Secure" : ""};`;
+    }
+
+    let profile: any = null;
+    try {
+      profile = await rpcCall("auth", "me", {}, { Authorization: `Bearer ${token}` });
+    } catch {
+      // Fallback to provided fields if me call is delayed
+    }
+
+    const resolvedUserId = profile?.userId || fallbackUser?.userId || "unknown";
+    const resolvedEmail = profile?.email || fallbackUser?.email || email.trim() || "user@cellsweb.com";
+    const resolvedDisplayName =
+      profile?.displayName || fallbackUser?.displayName || resolvedEmail.split("@")[0];
+    const resolvedRole = profile?.role || fallbackUser?.role || "MAILBOX_USER";
+    const resolvedOrgSlug = profile?.orgSlug || "cellsweb";
+    const resolvedOrgName = profile?.orgName || "CellsInbox";
+    const resolvedOrganizationId = profile?.organizationId;
+
+    saveAccount({
+      userId: resolvedUserId,
+      email: resolvedEmail,
+      displayName: resolvedDisplayName,
+      role: resolvedRole,
+      orgSlug: resolvedOrgSlug,
+      orgName: resolvedOrgName,
+      organizationId: resolvedOrganizationId,
+      token,
+    });
+
+    const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+    const redirectTarget = params.get("redirect") || "/inbox";
+    router.push(redirectTarget);
+  };
+
   const handlePasskeyLogin = async () => {
     setError(null);
     setPasskeyLoading(true);
@@ -67,6 +113,8 @@ export default function LoginPage() {
         status: string;
         userId: string;
         email: string;
+        displayName?: string;
+        role: string;
         accessToken: string;
         refreshToken?: string;
       }>("auth", "passkeyAuthVerify", {
@@ -75,9 +123,7 @@ export default function LoginPage() {
       });
 
       if (verifyRes.accessToken) {
-        localStorage.setItem("accessToken", verifyRes.accessToken);
-        if (verifyRes.refreshToken) localStorage.setItem("refreshToken", verifyRes.refreshToken);
-        router.push("/inbox");
+        await syncAuthSession(verifyRes.accessToken, verifyRes.refreshToken, verifyRes);
       } else {
         throw new Error("Failed to authenticate with Passkey");
       }
@@ -99,16 +145,25 @@ export default function LoginPage() {
 
     try {
       if (requires2FA) {
-        // Submit TOTP challenge
-        const res = await rpcCall<{ accessToken: string; refreshToken: string }>(
-          "auth",
-          "totp-verify",
-          { userId, code: totpCode.trim() },
-        );
-        localStorage.setItem("accessToken", res.accessToken);
-        localStorage.setItem("refreshToken", res.refreshToken);
-        router.push("/inbox");
-        return;
+        if (totpCode.trim().length === 6) {
+          const res = await rpcCall<{
+            accessToken: string;
+            refreshToken: string;
+            userId: string;
+            email: string;
+            role: string;
+            displayName?: string;
+          }>("auth", "totp-verify", { userId, code: totpCode.trim() });
+
+          await syncAuthSession(res.accessToken, res.refreshToken, res);
+          return;
+        } else if (twoFactorMethods.includes("passkey")) {
+          setLoading(false);
+          await handlePasskeyLogin();
+          return;
+        } else {
+          throw new Error("Please enter your 6-digit Authenticator Code.");
+        }
       }
 
       // Initial credential submission
@@ -116,6 +171,8 @@ export default function LoginPage() {
         status: "AUTHENTICATED" | "REQUIRES_ONBOARDING" | "REQUIRES_2FA";
         userId: string;
         email: string;
+        displayName?: string;
+        role?: string;
         twoFactorMethods?: string[];
         accessToken?: string;
         refreshToken?: string;
@@ -132,16 +189,11 @@ export default function LoginPage() {
         const methods = res.twoFactorMethods || [];
         setTwoFactorMethods(methods);
         setLoading(false);
-        if (methods.includes("passkey") && !methods.includes("totp")) {
-          setTimeout(() => handlePasskeyLogin(), 300);
-        }
         return;
       }
 
       if (res.status === "AUTHENTICATED" && res.accessToken) {
-        localStorage.setItem("accessToken", res.accessToken);
-        if (res.refreshToken) localStorage.setItem("refreshToken", res.refreshToken);
-        router.push("/inbox");
+        await syncAuthSession(res.accessToken, res.refreshToken, res as any);
       }
     } catch (err: any) {
       setError(err.message || "Failed to sign in. Please verify your credentials.");
@@ -149,6 +201,15 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
+
+  const resetToLogin = () => {
+    setRequires2FA(false);
+    setTotpCode("");
+    setError(null);
+  };
+
+  const hasPasskey2FA = twoFactorMethods.includes("passkey");
+  const hasTotp2FA = twoFactorMethods.includes("totp") || (!hasPasskey2FA && requires2FA);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-background">
@@ -172,7 +233,11 @@ export default function LoginPage() {
           </CardTitle>
           <CardDescription>
             {requires2FA
-              ? "Enter your 6-digit Authenticator Code"
+              ? hasPasskey2FA && !hasTotp2FA
+                ? "Verify using Touch ID or registered Passkey"
+                : hasPasskey2FA && hasTotp2FA
+                  ? "Verify with Touch ID or Authenticator App"
+                  : "Enter your 6-digit Authenticator Code"
               : `Sign in to your ${branding.isCustom ? branding.name : "sovereign"} mailbox`}
           </CardDescription>
         </CardHeader>
@@ -246,30 +311,29 @@ export default function LoginPage() {
               </>
             ) : (
               <div className="space-y-4">
-                {twoFactorMethods.includes("passkey") && (
+                {hasPasskey2FA && (
                   <Button
                     type="button"
-                    variant="outline"
                     size="lg"
                     disabled={passkeyLoading}
                     onClick={handlePasskeyLogin}
-                    className="w-full h-11 border-border/80 hover:bg-accent/60 flex items-center justify-center gap-2 font-medium shadow-sm"
+                    className="w-full h-12 border-border/80 flex items-center justify-center gap-2 font-semibold shadow-md bg-brand-500 hover:bg-brand-600 text-white"
                   >
                     {passkeyLoading ? (
                       <>
-                        <Loader2 className="size-4 animate-spin text-primary" />
+                        <Loader2 className="size-5 animate-spin" />
                         <span>Verifying Touch ID / Passkey...</span>
                       </>
                     ) : (
                       <>
-                        <Fingerprint className="size-4 text-primary" />
+                        <Fingerprint className="size-5" />
                         <span>Verify with Touch ID / Passkey</span>
                       </>
                     )}
                   </Button>
                 )}
 
-                {twoFactorMethods.includes("passkey") && twoFactorMethods.includes("totp") && (
+                {hasPasskey2FA && hasTotp2FA && (
                   <div className="relative flex items-center justify-center my-1">
                     <div className="absolute inset-0 flex items-center">
                       <span className="w-full border-t border-border/60" />
@@ -280,18 +344,18 @@ export default function LoginPage() {
                   </div>
                 )}
 
-                {(!twoFactorMethods.length || twoFactorMethods.includes("totp")) && (
+                {hasTotp2FA && (
                   <div className="space-y-2">
                     <Label htmlFor="totp">Authenticator Code</Label>
                     <Input
                       id="totp"
                       type="text"
-                      required={!twoFactorMethods.includes("passkey")}
+                      required={!hasPasskey2FA}
                       maxLength={6}
                       value={totpCode}
                       onChange={(e) => setTotpCode(e.target.value)}
                       placeholder="123456"
-                      autoFocus
+                      autoFocus={!hasPasskey2FA}
                       className="text-center text-xl tracking-[0.3em] font-mono"
                     />
                   </div>
@@ -301,14 +365,47 @@ export default function LoginPage() {
           </CardContent>
 
           <CardFooter className="flex flex-col gap-3 pt-2">
-            <Button type="submit" disabled={loading} className="w-full" size="lg">
-              {loading ? "Verifying..." : requires2FA ? "Verify & Sign In" : "Sign In"}
-            </Button>
-            <div className="text-center">
-              <Link href="/onboarding/organization" className="text-xs text-muted-foreground hover:text-primary transition-colors">
-                New organization? <span className="font-semibold text-primary underline underline-offset-2">Onboard sovereign domain & keys</span>
-              </Link>
-            </div>
+            {!requires2FA ? (
+              <Button type="submit" disabled={loading} className="w-full" size="lg">
+                {loading ? "Signing in..." : "Sign In"}
+              </Button>
+            ) : hasTotp2FA ? (
+              <Button
+                type="submit"
+                disabled={loading || totpCode.trim().length !== 6}
+                className="w-full"
+                size="lg"
+              >
+                {loading ? "Verifying..." : "Verify Code & Sign In"}
+              </Button>
+            ) : null}
+
+            {requires2FA && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={resetToLogin}
+                className="w-full text-xs text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5"
+              >
+                <ArrowLeft className="size-3.5" />
+                <span>Back to Sign In</span>
+              </Button>
+            )}
+
+            {!requires2FA && (
+              <div className="text-center">
+                <Link
+                  href="/onboarding/organization"
+                  className="text-xs text-muted-foreground hover:text-primary transition-colors"
+                >
+                  New organization?{" "}
+                  <span className="font-semibold text-primary underline underline-offset-2">
+                    Onboard sovereign domain & keys
+                  </span>
+                </Link>
+              </div>
+            )}
           </CardFooter>
         </form>
       </Card>

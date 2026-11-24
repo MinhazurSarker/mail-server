@@ -67,6 +67,7 @@ export const run = async (
     status: "AUTHENTICATED",
     userId: user._id.toString(),
     email: user.email,
+    displayName: user.displayName || user.email.split("@")[0],
     role: user.role,
     accessToken: tokens.accessToken,
     refreshToken: tokens.refreshToken,

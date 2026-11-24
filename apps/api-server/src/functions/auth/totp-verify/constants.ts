@@ -17,6 +17,7 @@ export const outputSchema = Type.Object({
   status: Type.Literal("AUTHENTICATED"),
   userId: Type.String(),
   email: Type.String(),
+  displayName: Type.Optional(Type.String()),
   role: Type.String(),
   accessToken: Type.String(),
   refreshToken: Type.String(),
