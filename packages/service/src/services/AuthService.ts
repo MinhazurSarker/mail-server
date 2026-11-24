@@ -10,6 +10,7 @@ import {
   type AuthenticationResponseJSON,
 } from "@simplewebauthn/server";
 import {
+  mongoose,
   UserModel,
   CredentialModel,
   OrganizationModel,
@@ -48,14 +49,15 @@ export class AuthService {
   }
 
   static async generateTokens(user: IUser): Promise<AuthTokens> {
+    const tokenVersion = user.tokenVersion || 1;
     const payload: TokenPayload = {
       userId: user._id.toString(),
-      organizationId: user.organizationId.toString(),
-      domainId: user.domainId.toString(),
+      organizationId: user.organizationId ? user.organizationId.toString() : "",
+      domainId: user.domainId ? user.domainId.toString() : "",
       email: user.email,
       role: user.role,
       status: user.status,
-      tokenVersion: user.tokenVersion || 1,
+      tokenVersion,
     };
 
     const accessToken = await new SignJWT(payload as unknown as Record<string, any>)
@@ -66,7 +68,7 @@ export class AuthService {
 
     const refreshToken = await new SignJWT({
       userId: user._id.toString(),
-      tokenVersion: user.tokenVersion || 1,
+      tokenVersion,
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
@@ -81,8 +83,62 @@ export class AuthService {
     return payload as unknown as TokenPayload;
   }
 
+  /**
+   * Centralized tenant lifecycle validation (R9).
+   * Platform admins are globally privileged.
+   * All other users strictly require an existing organization with status ACTIVE.
+   */
+  static async assertActiveTenant(user: IUser): Promise<void> {
+    if (user.status === "SUSPENDED" || user.status === "LOCKED") {
+      throw new Error(`Account is ${user.status.toLowerCase()}. Access denied.`);
+    }
+
+    if (user.role === "PLATFORM_ADMIN") {
+      return;
+    }
+    if (!user.organizationId) {
+      throw new Error("User has no assigned organization.");
+    }
+    const org = await OrganizationModel.findById(user.organizationId);
+    if (!org) {
+      throw new Error("Organization not found.");
+    }
+    if (org.status === "PENDING_APPROVAL") {
+      throw new Error("Organization registration is pending approval by platform administrator.");
+    }
+    if (org.status === "SUSPENDED") {
+      throw new Error("This organization has been suspended by platform administration. Contact support.");
+    }
+    if (org.status !== "ACTIVE") {
+      throw new Error("Organization is not active. Access denied.");
+    }
+  }
+
+  /**
+   * Atomic session revocation (R4, R5).
+   * Uses aggregation pipeline update to ensure legacy users without tokenVersion
+   * are unconditionally incremented from default 1 to 2.
+   * Also invalidates all pending authentication challenges for this user.
+   */
   static async revokeUserSessions(userId: string): Promise<void> {
-    await UserModel.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } });
+    await UserModel.updateOne(
+      { _id: userId },
+      [
+        {
+          $set: {
+            tokenVersion: {
+              $add: [{ $ifNull: ["$tokenVersion", 1] }, 1],
+            },
+          },
+        },
+      ],
+    );
+
+    // Invalidate all outstanding pending challenges (R5)
+    await AuthChallengeModel.updateMany(
+      { userId: new Types.ObjectId(userId), status: "PENDING" },
+      { $set: { status: "EXPIRED" } },
+    );
   }
 
   // --- AuthChallenge Engine ---
@@ -93,6 +149,8 @@ export class AuthService {
     factorsRequired?: string[];
     passkeyChallenge?: string;
     totpSecretPending?: string;
+    expectedRPID?: string;
+    expectedOrigin?: string;
     maxAttempts?: number;
     expiresInSeconds?: number;
   }): Promise<{ challengeToken: string; expiresAt: Date }> {
@@ -101,8 +159,20 @@ export class AuthService {
     const expiresIn = params.expiresInSeconds || 300; // 5 minutes default
     const expiresAt = new Date(Date.now() + expiresIn * 1000);
 
+    let userTokenVersion: number | undefined;
+    if (params.userId) {
+      const user = await UserModel.findById(params.userId);
+      if (user) {
+        userTokenVersion = user.tokenVersion || 1;
+      }
+    }
+
     await AuthChallengeModel.create({
-      userId: params.userId ? (typeof params.userId === "string" ? new Types.ObjectId(params.userId) : params.userId) : undefined,
+      userId: params.userId
+        ? typeof params.userId === "string"
+          ? new Types.ObjectId(params.userId)
+          : params.userId
+        : undefined,
       challengeHash,
       type: params.type,
       status: "PENDING",
@@ -110,14 +180,22 @@ export class AuthService {
       factorsVerified: [],
       passkeyChallenge: params.passkeyChallenge,
       totpSecretPending: params.totpSecretPending,
+      userTokenVersion,
+      expectedRPID: params.expectedRPID,
+      expectedOrigin: params.expectedOrigin,
       attempts: 0,
-      maxAttempts: params.maxAttempts || 5,
+      maxAttempts: params.maxAttempts !== undefined ? params.maxAttempts : 5,
       expiresAt,
     });
 
     return { challengeToken, expiresAt };
   }
 
+  /**
+   * Atomically claims an authentication challenge (R2, R5, R11).
+   * Enforces purpose binding and dynamic maxAttempts in the atomic query.
+   * Revalidates user credential generation / tokenVersion (R5).
+   */
   static async claimPendingChallenge(
     challengeToken: string,
     expectedType: AuthChallengeType,
@@ -130,13 +208,19 @@ export class AuthService {
     const challengeHash = crypto.createHash("sha256").update(cleanToken).digest("hex");
     const now = new Date();
 
-    // Atomic find and increment attempt count while ensuring challenge is PENDING, not expired, and attempts < maxAttempts
+    // Atomic find and increment attempt count while strictly ensuring:
+    // 1. challengeHash matches
+    // 2. purpose matches expectedType (does not spend attempt on wrong purpose) (R11)
+    // 3. status is PENDING
+    // 4. expiresAt > now
+    // 5. attempts < maxAttempts (dynamic limit check, R11)
     const challenge = await AuthChallengeModel.findOneAndUpdate(
       {
         challengeHash,
+        type: expectedType,
         status: "PENDING",
         expiresAt: { $gt: now },
-        attempts: { $lt: 5 },
+        $expr: { $lt: ["$attempts", "$maxAttempts"] },
       },
       {
         $inc: { attempts: 1 },
@@ -152,6 +236,9 @@ export class AuthService {
       if (!existing) {
         throw new Error("Authentication challenge expired or invalid. Please sign in again.");
       }
+      if (existing.type !== expectedType) {
+        throw new Error(`Invalid challenge purpose: expected ${expectedType}`);
+      }
       if (existing.status === "CONSUMED") {
         throw new Error("Authentication challenge already used. Please initiate a new login.");
       }
@@ -164,8 +251,20 @@ export class AuthService {
       throw new Error("Authentication challenge invalid or expired.");
     }
 
-    if (challenge.type !== expectedType) {
-      throw new Error(`Invalid challenge purpose: expected ${expectedType}`);
+    // Verify session/credential generation: reject stale challenge if user tokenVersion changed (R5)
+    if (challenge.userId && challenge.userTokenVersion !== undefined) {
+      const user = await UserModel.findById(challenge.userId);
+      if (!user) {
+        throw new Error("User account associated with challenge no longer exists.");
+      }
+      const currentVersion = user.tokenVersion || 1;
+      if (currentVersion !== challenge.userTokenVersion) {
+        await AuthChallengeModel.updateOne(
+          { _id: challenge._id },
+          { $set: { status: "EXPIRED" } },
+        );
+        throw new Error("Authentication challenge is invalid: account credentials or sessions have been revoked. Please sign in again.");
+      }
     }
 
     return challenge;
@@ -173,7 +272,7 @@ export class AuthService {
 
   static async consumeChallenge(challengeId: Types.ObjectId | string): Promise<boolean> {
     const res = await AuthChallengeModel.updateOne(
-      { _id: challengeId, status: "PENDING" },
+      { _id: challengeId, status: "PENDING", expiresAt: { $gt: new Date() } },
       { $set: { status: "CONSUMED", consumedAt: new Date() } },
     );
     return res.modifiedCount > 0;
@@ -191,12 +290,8 @@ export class AuthService {
       throw new Error(`Account is ${user.status.toLowerCase()}. Please contact your organization administrator.`);
     }
 
-    if (user.role !== "PLATFORM_ADMIN") {
-      const org = await OrganizationModel.findById(user.organizationId);
-      if (org && org.status === "SUSPENDED") {
-        throw new Error("This organization has been suspended by platform administration. Contact support.");
-      }
-    }
+    // Strict tenant existence and active status enforcement (R9)
+    await this.assertActiveTenant(user);
 
     const isValid = await argon2.verify(user.passwordHash, passwordPlain);
     if (!isValid) {
@@ -242,11 +337,16 @@ export class AuthService {
       throw new Error(`Account is ${user.status.toLowerCase()}. Access denied.`);
     }
 
-    if (user.role !== "PLATFORM_ADMIN") {
-      const org = await OrganizationModel.findById(user.organizationId);
-      if (!org || org.status === "SUSPENDED") {
-        throw new Error("This organization has been suspended by platform administration. Contact support.");
-      }
+    // Strict tenant existence and active status enforcement (R9)
+    await this.assertActiveTenant(user);
+
+    const expectedVersion = challenge.userTokenVersion ?? 1;
+    if ((user.tokenVersion || 1) !== expectedVersion) {
+      await AuthChallengeModel.updateOne(
+        { _id: challenge._id },
+        { $set: { status: "EXPIRED" } },
+      );
+      throw new Error("Authentication challenge is invalid: account credentials or sessions have been revoked. Please sign in again.");
     }
 
     const cred = await CredentialModel.findOne({ userId: user._id, type: "TOTP" }).select("+secret");
@@ -262,18 +362,55 @@ export class AuthService {
     const currentStep = Math.floor(Date.now() / 1000 / 30);
     const codeStep = currentStep + delta;
 
-    if (cred.lastUsedTimeStep && codeStep <= cred.lastUsedTimeStep) {
+    // Atomic monotonic step update on Credential (R2)
+    // Ensures only one request can use this time step; concurrent requests fail here
+    const credUpdate = await CredentialModel.findOneAndUpdate(
+      {
+        _id: cred._id,
+        $or: [
+          { lastUsedTimeStep: { $lt: codeStep } },
+          { lastUsedTimeStep: { $exists: false } },
+        ],
+      },
+      {
+        $set: {
+          lastUsedTimeStep: codeStep,
+          lastUsedAt: new Date(),
+        },
+      },
+      { new: true },
+    );
+
+    if (!credUpdate) {
       throw new Error("TOTP code already used. Please wait for the next 30-second code.");
     }
 
-    cred.lastUsedTimeStep = codeStep;
-    cred.lastUsedAt = new Date();
-    await cred.save();
+    // Final commit boundary: atomic consumption asserting generation consistency (R5)
+    // Must assert the user's tokenVersion was not incremented by concurrent revocation
+    const finalUser = await UserModel.findOne({
+      _id: user._id,
+      $or: [
+        { tokenVersion: expectedVersion },
+        ...(expectedVersion === 1 ? [{ tokenVersion: { $exists: false } }] : []),
+      ],
+      status: "ACTIVE",
+    });
 
-    await this.consumeChallenge(challenge._id);
+    if (!finalUser) {
+      await AuthChallengeModel.updateOne(
+        { _id: challenge._id },
+        { $set: { status: "EXPIRED" } },
+      );
+      throw new Error("Authentication challenge expired or invalidated by session revocation. Please sign in again.");
+    }
 
-    const tokens = await this.generateTokens(user);
-    return { user, tokens };
+    const consumeSuccess = await this.consumeChallenge(challenge._id);
+    if (!consumeSuccess) {
+      throw new Error("Authentication challenge already used or expired. Please sign in again.");
+    }
+
+    const tokens = await this.generateTokens(finalUser);
+    return { user: finalUser, tokens };
   }
 
   // --- Onboarding Completion ---
@@ -282,12 +419,18 @@ export class AuthService {
     challengeToken: string;
     newPassword?: string;
     totpToken?: string;
-    passkeyCredential?: {
-      credentialId: string;
-      publicKey: string;
-      counter: number;
-    };
+    passkeyResponse?: RegistrationResponseJSON;
+    passkeyCredential?: never;
   }): Promise<{ user: IUser; tokens: AuthTokens }> {
+    // Explicitly reject raw client-supplied passkey credential objects (R1)
+    if ((data as any).passkeyCredential && !data.passkeyResponse) {
+      throw new Error("Raw passkey credentials are not accepted. Passkey enrollment requires verified WebAuthn registration.");
+    }
+
+    if (!data.totpToken && !data.passkeyResponse) {
+      throw new Error("Mandatory security setup: You must configure a Passkey or TOTP.");
+    }
+
     const challenge = await this.claimPendingChallenge(data.challengeToken, "FIRST_LOGIN_ONBOARDING");
 
     if (!challenge.userId) {
@@ -303,19 +446,13 @@ export class AuthService {
       throw new Error("Account has already completed security setup. Please sign in normally.");
     }
 
-    if (user.role !== "PLATFORM_ADMIN") {
-      const org = await OrganizationModel.findById(user.organizationId);
-      if (!org || org.status === "SUSPENDED") {
-        throw new Error("This organization has been suspended by platform administration. Contact support.");
-      }
-    }
+    // Strict tenant existence and active status enforcement (R9)
+    await this.assertActiveTenant(user);
 
-    // Must enroll at least one 2FA method
-    if (!data.totpToken && !data.passkeyCredential) {
-      throw new Error("Mandatory security setup: You must configure a Passkey or TOTP.");
-    }
+    let verifiedTotp: { secret: string; codeStep: number } | null = null;
+    let verifiedPasskeyCredential: { id: string; publicKey: string; counter: number } | null = null;
 
-    // Verify and save TOTP if provided
+    // 1. Verify TOTP if provided
     if (data.totpToken) {
       const secret = challenge.totpSecretPending;
       if (!secret) {
@@ -328,43 +465,197 @@ export class AuthService {
       }
 
       const currentStep = Math.floor(Date.now() / 1000 / 30);
-      const codeStep = currentStep + delta;
-
-      await CredentialModel.create({
-        userId: user._id,
-        type: "TOTP",
+      verifiedTotp = {
         secret,
-        name: "Authenticator App (TOTP)",
-        lastUsedTimeStep: codeStep,
-        lastUsedAt: new Date(),
+        codeStep: currentStep + delta,
+      };
+    }
+
+    // 2. Verify WebAuthn Passkey registration ceremony if provided (R1)
+    if (data.passkeyResponse) {
+      if (!challenge.passkeyChallenge) {
+        throw new Error("No passkey challenge issued for this onboarding session.");
+      }
+      const expectedRPID = challenge.expectedRPID || "webmail.cellsweb.com";
+      const expectedOrigin = challenge.expectedOrigin || "https://webmail.cellsweb.com";
+
+      const verification = await verifyRegistrationResponse({
+        response: data.passkeyResponse,
+        expectedChallenge: challenge.passkeyChallenge,
+        expectedOrigin,
+        expectedRPID,
       });
+
+      if (!verification.verified || !verification.registrationInfo) {
+        throw new Error("Passkey registration verification failed.");
+      }
+
+      const { credential } = verification.registrationInfo;
+      verifiedPasskeyCredential = {
+        id: credential.id,
+        publicKey: Buffer.from(credential.publicKey).toString("base64"),
+        counter: credential.counter,
+      };
     }
 
-    // Register Passkey if provided
-    if (data.passkeyCredential) {
-      await CredentialModel.create({
-        userId: user._id,
-        type: "PASSKEY",
-        credentialId: data.passkeyCredential.credentialId,
-        publicKey: data.passkeyCredential.publicKey,
-        counter: data.passkeyCredential.counter,
-      });
+    // 3. Prepare password hash before persistence boundary
+    const newPasswordHash =
+      data.newPassword && data.newPassword.trim().length >= 8
+        ? await argon2.hash(data.newPassword.trim())
+        : undefined;
+
+    // 4. Single consistent completion boundary (R3)
+    // Check if MongoDB deployment supports multi-document transactions
+    const client = (mongoose.connection as any).getClient
+      ? (mongoose.connection as any).getClient()
+      : (mongoose.connection as any).client;
+    const canUseTransaction =
+      Boolean(client?.topology?.description?.type &&
+      client.topology.description.type !== "Single");
+
+    if (canUseTransaction) {
+      const session = await mongoose.startSession();
+      try {
+        let updatedUser: IUser | null = null;
+        await session.withTransaction(async () => {
+          // Atomically consume challenge inside transaction
+          const chal = await AuthChallengeModel.findOneAndUpdate(
+            { _id: challenge._id, status: "PENDING" },
+            { $set: { status: "CONSUMED" } },
+            { session },
+          );
+          if (!chal) {
+            throw new Error("Onboarding challenge already used or expired. Please initiate onboarding again.");
+          }
+
+          // Atomically transition user status PENDING_SECURITY_SETUP -> ACTIVE
+          updatedUser = await UserModel.findOneAndUpdate(
+            { _id: user._id, status: "PENDING_SECURITY_SETUP" },
+            {
+              $set: {
+                status: "ACTIVE",
+                twoFactorEnforced: true,
+                ...(newPasswordHash ? { passwordHash: newPasswordHash } : {}),
+              },
+              $inc: { tokenVersion: 1 },
+            },
+            { new: true, session },
+          );
+          if (!updatedUser) {
+            throw new Error("Account has already completed security setup. Please sign in normally.");
+          }
+
+          // Persist verified factor credentials
+          if (verifiedTotp) {
+            await CredentialModel.findOneAndUpdate(
+              { userId: user._id, type: "TOTP" },
+              {
+                $set: {
+                  secret: verifiedTotp.secret,
+                  name: "Authenticator App (TOTP)",
+                  lastUsedTimeStep: verifiedTotp.codeStep,
+                  lastUsedAt: new Date(),
+                },
+              },
+              { upsert: true, new: true, session },
+            );
+          }
+
+          if (verifiedPasskeyCredential) {
+            await CredentialModel.create(
+              [
+                {
+                  userId: user._id,
+                  type: "PASSKEY",
+                  credentialId: verifiedPasskeyCredential.id,
+                  publicKey: verifiedPasskeyCredential.publicKey,
+                  counter: verifiedPasskeyCredential.counter,
+                },
+              ],
+              { session },
+            );
+          }
+        });
+
+        const tokens = await this.generateTokens(updatedUser!);
+        return { user: updatedUser!, tokens };
+      } finally {
+        await session.endSession();
+      }
     }
 
-    // Update password if changed from temporary
-    if (data.newPassword && data.newPassword.trim().length >= 8) {
-      user.passwordHash = await argon2.hash(data.newPassword.trim());
+    // Standalone MongoDB fallback: Guarded state machine with atomic ownership gate and rollback
+    const claimLockId = challenge._id.toString();
+
+    // Step 1: Claim user activation atomically before touching any credentials
+    const updatedUser = await UserModel.findOneAndUpdate(
+      { _id: user._id, status: "PENDING_SECURITY_SETUP" },
+      {
+        $set: {
+          status: "ACTIVE",
+          twoFactorEnforced: true,
+          ...(newPasswordHash ? { passwordHash: newPasswordHash } : {}),
+          onboardingClaimId: claimLockId,
+        },
+        $inc: { tokenVersion: 1 },
+      },
+      { new: true },
+    );
+
+    if (!updatedUser) {
+      throw new Error("Account has already completed security setup. Please sign in normally.");
     }
 
-    user.status = "ACTIVE";
-    user.twoFactorEnforced = true;
-    user.tokenVersion = (user.tokenVersion || 1) + 1;
-    const savedUser = await user.save();
+    try {
+      // Step 2: Persist verified credentials (only the winning challenge reaches this step)
+      if (verifiedTotp) {
+        await CredentialModel.findOneAndUpdate(
+          { userId: user._id, type: "TOTP" },
+          {
+            $set: {
+              secret: verifiedTotp.secret,
+              name: "Authenticator App (TOTP)",
+              lastUsedTimeStep: verifiedTotp.codeStep,
+              lastUsedAt: new Date(),
+            },
+          },
+          { upsert: true, new: true },
+        );
+      }
 
-    await this.consumeChallenge(challenge._id);
+      if (verifiedPasskeyCredential) {
+        await CredentialModel.create({
+          userId: user._id,
+          type: "PASSKEY",
+          credentialId: verifiedPasskeyCredential.id,
+          publicKey: verifiedPasskeyCredential.publicKey,
+          counter: verifiedPasskeyCredential.counter,
+        });
+      }
 
-    const tokens = await this.generateTokens(savedUser);
-    return { user: savedUser, tokens };
+      // Step 3: Consume the challenge
+      const consumeSuccess = await this.consumeChallenge(challenge._id);
+      if (!consumeSuccess) {
+        throw new Error("Onboarding challenge already used or expired.");
+      }
+
+      const tokens = await this.generateTokens(updatedUser);
+      return { user: updatedUser, tokens };
+    } catch (err) {
+      // Step 4: Rollback recovery: if credential or consumption step fails,
+      // revert user status to PENDING_SECURITY_SETUP so the account is not unrecoverable!
+      await UserModel.updateOne(
+        { _id: user._id, onboardingClaimId: claimLockId },
+        {
+          $set: { status: "PENDING_SECURITY_SETUP", twoFactorEnforced: false },
+          $unset: { onboardingClaimId: 1 },
+        },
+      );
+      if (verifiedTotp) {
+        await CredentialModel.deleteOne({ userId: user._id, type: "TOTP", secret: verifiedTotp.secret });
+      }
+      throw err;
+    }
   }
 
   // --- WebAuthn Passkeys ---
@@ -380,7 +671,9 @@ export class AuthService {
     }
     const isLocal = cleanCandidate === "localhost" || cleanCandidate === "127.0.0.1";
     const expectedOrigin = isLocal
-      ? (host && host.includes(":") ? `http://${host}` : `http://${cleanCandidate}:3000`)
+      ? host && host.includes(":")
+        ? `http://${host}`
+        : `http://${cleanCandidate}:3000`
       : `https://${cleanCandidate}`;
     return { cleanHost: cleanCandidate, expectedOrigin };
   }
@@ -392,7 +685,7 @@ export class AuthService {
       transports: c.transports as any,
     }));
 
-    const { cleanHost } = this.resolveHostAndOrigin(host);
+    const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
 
     const options = await generateRegistrationOptions({
       rpName: "CellsInbox Enterprise",
@@ -412,6 +705,8 @@ export class AuthService {
       userId: user._id,
       type: "PASSKEY_REG",
       passkeyChallenge: options.challenge,
+      expectedRPID: cleanHost,
+      expectedOrigin,
     });
 
     return { options, challengeToken };
@@ -433,7 +728,7 @@ export class AuthService {
           type: "PASSKEY_REG",
           status: "PENDING",
           expiresAt: { $gt: new Date() },
-          attempts: { $lt: 5 },
+          $expr: { $lt: ["$attempts", "$maxAttempts"] },
         },
         { $inc: { attempts: 1 } },
         { new: true, sort: { createdAt: -1 } },
@@ -452,17 +747,24 @@ export class AuthService {
     }
 
     const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
-    const expectedRPID = cleanHost;
+    const expectedRPID = challenge.expectedRPID || cleanHost;
+    const origin = challenge.expectedOrigin || expectedOrigin;
 
     const verification = await verifyRegistrationResponse({
       response,
       expectedChallenge: challenge.passkeyChallenge,
-      expectedOrigin,
+      expectedOrigin: origin,
       expectedRPID,
     });
 
     if (verification.verified && verification.registrationInfo) {
       const { credential } = verification.registrationInfo;
+
+      // Consume challenge atomically before writing credential (R2)
+      const consumeSuccess = await this.consumeChallenge(challenge._id);
+      if (!consumeSuccess) {
+        throw new Error("Passkey registration challenge already used or expired.");
+      }
 
       await CredentialModel.create({
         userId: user._id,
@@ -472,7 +774,7 @@ export class AuthService {
         counter: credential.counter,
       });
 
-      await this.consumeChallenge(challenge._id);
+      // Revoke existing sessions atomically (R4)
       await this.revokeUserSessions(user._id.toString());
     }
 
@@ -489,7 +791,7 @@ export class AuthService {
       }));
     }
 
-    const { cleanHost } = this.resolveHostAndOrigin(host);
+    const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
 
     const options = await generateAuthenticationOptions({
       rpID: cleanHost,
@@ -501,6 +803,8 @@ export class AuthService {
       userId: user ? user._id : undefined,
       type: "PASSKEY_AUTH",
       passkeyChallenge: options.challenge,
+      expectedRPID: cleanHost,
+      expectedOrigin,
     });
 
     return { options, challengeToken };
@@ -525,6 +829,11 @@ export class AuthService {
       throw new Error("Passkey credential not registered for this account.");
     }
 
+    // Account binding check: if challenge was bound to a specific user, verify credential belongs to that user
+    if (challenge.userId && challenge.userId.toString() !== cred.userId.toString()) {
+      throw new Error("Passkey credential does not match the requested authentication account.");
+    }
+
     const user = await UserModel.findById(cred.userId);
     if (!user) {
       throw new Error("User associated with this Passkey not found.");
@@ -534,20 +843,26 @@ export class AuthService {
       throw new Error(`Account is ${user.status.toLowerCase()}. Access denied.`);
     }
 
-    if (user.role !== "PLATFORM_ADMIN") {
-      const org = await OrganizationModel.findById(user.organizationId);
-      if (org && org.status === "SUSPENDED") {
-        throw new Error("This organization has been suspended by platform administration. Contact support.");
-      }
+    // Strict tenant existence and active status enforcement (R9)
+    await this.assertActiveTenant(user);
+
+    const expectedVersion = challenge.userTokenVersion;
+    if (expectedVersion !== undefined && (user.tokenVersion || 1) !== expectedVersion) {
+      await AuthChallengeModel.updateOne(
+        { _id: challenge._id },
+        { $set: { status: "EXPIRED" } },
+      );
+      throw new Error("Authentication challenge is invalid: account credentials or sessions have been revoked. Please sign in again.");
     }
 
     const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
-    const expectedRPID = cleanHost;
+    const expectedRPID = challenge.expectedRPID || cleanHost;
+    const origin = challenge.expectedOrigin || expectedOrigin;
 
     const verification = await verifyAuthenticationResponse({
       response,
       expectedChallenge: challenge.passkeyChallenge,
-      expectedOrigin,
+      expectedOrigin: origin,
       expectedRPID,
       credential: {
         id: cred.credentialId!,
@@ -557,11 +872,45 @@ export class AuthService {
     });
 
     if (verification.verified && verification.authenticationInfo) {
-      cred.counter = verification.authenticationInfo.newCounter;
-      cred.lastUsedAt = new Date();
-      await cred.save();
+      const newCounter = verification.authenticationInfo.newCounter;
 
-      await this.consumeChallenge(challenge._id);
+      // Monotonic counter update on Credential
+      if (newCounter > 0) {
+        await CredentialModel.updateOne(
+          { _id: cred._id, counter: { $lt: newCounter } },
+          { $set: { counter: newCounter, lastUsedAt: new Date() } },
+        );
+      } else {
+        cred.lastUsedAt = new Date();
+        await cred.save();
+      }
+
+      // Final commit boundary: atomic consumption asserting generation consistency (R5)
+      if (expectedVersion !== undefined) {
+        const finalUser = await UserModel.findOne({
+          _id: user._id,
+          $or: [
+            { tokenVersion: expectedVersion },
+            ...(expectedVersion === 1 ? [{ tokenVersion: { $exists: false } }] : []),
+          ],
+          status: "ACTIVE",
+        });
+
+        if (!finalUser) {
+          await AuthChallengeModel.updateOne(
+            { _id: challenge._id },
+            { $set: { status: "EXPIRED" } },
+          );
+          throw new Error("Authentication challenge expired or invalidated by session revocation. Please sign in again.");
+        }
+      }
+
+      // Atomic challenge consumption boundary (R2)
+      const consumeSuccess = await this.consumeChallenge(challenge._id);
+      if (!consumeSuccess) {
+        throw new Error("Passkey challenge already used or expired.");
+      }
+
       const tokens = await this.generateTokens(user);
       return { user, tokens, verification };
     }
@@ -595,8 +944,10 @@ export class AuthService {
     );
 
     user.twoFactorEnforced = true;
-    user.tokenVersion = (user.tokenVersion || 1) + 1;
     await user.save();
+
+    // Invalidate other sessions and pending challenges atomically (R4, R5)
+    await this.revokeUserSessions(userId);
     return true;
   }
 
@@ -614,9 +965,11 @@ export class AuthService {
     const remainingPasskeys = await CredentialModel.countDocuments({ userId: user._id, type: "PASSKEY" });
     if (remainingPasskeys === 0) {
       user.twoFactorEnforced = false;
+      await user.save();
     }
-    user.tokenVersion = (user.tokenVersion || 1) + 1;
-    await user.save();
+
+    // Invalidate other sessions and pending challenges atomically (R4, R5)
+    await this.revokeUserSessions(userId);
     return true;
   }
 
@@ -664,9 +1017,11 @@ export class AuthService {
     const remainingPasskeys = await CredentialModel.countDocuments({ userId: user._id, type: "PASSKEY" });
     if (remainingTotp === 0 && remainingPasskeys === 0) {
       user.twoFactorEnforced = false;
+      await user.save();
     }
-    user.tokenVersion = (user.tokenVersion || 1) + 1;
-    await user.save();
+
+    // Invalidate other sessions and pending challenges atomically (R4, R5)
+    await this.revokeUserSessions(userId);
     return true;
   }
 }
