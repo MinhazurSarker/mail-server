@@ -1,6 +1,6 @@
 "use client";
 
-import { setSessionTokens, clearSession } from "./session";
+import { setSessionTokens, clearActiveSession, clearSession } from "./session";
 
 export interface StoredAccount {
   userId: string;
@@ -11,6 +11,7 @@ export interface StoredAccount {
   orgSlug?: string;
   orgName?: string;
   token: string;
+  refreshToken?: string;
   isActive?: boolean;
   avatarColor?: string;
   lastActive?: number;
@@ -77,14 +78,20 @@ export function saveAccount(account: StoredAccount): void {
   };
 
   if (existingIndex >= 0) {
-    accounts[existingIndex] = { ...accounts[existingIndex], ...accountToSave };
+    const existing = accounts[existingIndex];
+    accounts[existingIndex] = {
+      ...existing,
+      ...accountToSave,
+      refreshToken: accountToSave.refreshToken || existing.refreshToken,
+    };
+    accountToSave.refreshToken = accounts[existingIndex].refreshToken;
   } else {
     accounts.push(accountToSave);
   }
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
   localStorage.setItem(ACTIVE_KEY, accountToSave.userId);
-  setSessionTokens(accountToSave.token);
+  setSessionTokens(accountToSave.token, accountToSave.refreshToken);
 }
 
 export function switchAccount(userId: string): StoredAccount | null {
@@ -96,7 +103,7 @@ export function switchAccount(userId: string): StoredAccount | null {
   target.lastActive = Date.now();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
   localStorage.setItem(ACTIVE_KEY, target.userId);
-  setSessionTokens(target.token);
+  setSessionTokens(target.token, target.refreshToken);
   return target;
 }
 
@@ -110,7 +117,7 @@ export function removeAccount(userId: string): StoredAccount | null {
     if (accounts.length > 0) {
       const next = accounts[0];
       localStorage.setItem(ACTIVE_KEY, next.userId);
-      setSessionTokens(next.token);
+      setSessionTokens(next.token, next.refreshToken);
       return next;
     } else {
       clearSession();

@@ -85,6 +85,7 @@ export default function LoginPage() {
       orgName: resolvedOrgName,
       organizationId: resolvedOrganizationId,
       token,
+      refreshToken,
     });
 
     const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");

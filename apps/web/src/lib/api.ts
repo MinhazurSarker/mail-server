@@ -1,5 +1,5 @@
 import { createRpcClient } from "@cellsweb/rpc-client";
-import { clearSession } from "./session";
+import { clearActiveSession } from "./session";
 
 export const API_BASE_URL =
   typeof window !== "undefined"
@@ -34,6 +34,10 @@ export async function rpcCall<T = any>(
   data: any = {},
   headers?: Record<string, string>,
 ): Promise<T> {
+  const requestToken =
+    headers?.Authorization?.replace(/^Bearer\s+/i, "") ||
+    (typeof window !== "undefined" ? localStorage.getItem("accessToken") : null);
+
   try {
     return await rpc.request({
       namespace,
@@ -44,21 +48,38 @@ export async function rpcCall<T = any>(
   } catch (err: any) {
     if (typeof window !== "undefined") {
       const msg = (err?.message || "").toLowerCase();
-      if (
+      const isAuthError =
         msg.includes("unauthorized") ||
         msg.includes("jwt expired") ||
         msg.includes("invalid token") ||
         msg.includes("invalid or expired session token") ||
         msg.includes("session has been revoked") ||
         msg.includes("authentication required") ||
-        err?.status === 401
-      ) {
-        clearSession();
-        if (
-          !window.location.pathname.startsWith("/login") &&
-          !window.location.pathname.startsWith("/onboarding")
-        ) {
-          window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+        err?.status === 401;
+
+      if (isAuthError) {
+        const currentActiveToken = localStorage.getItem("accessToken");
+        // Only clear active session and redirect if the failed request belonged to the currently active identity
+        if (!requestToken || requestToken === currentActiveToken) {
+          clearActiveSession();
+          if (
+            !window.location.pathname.startsWith("/login") &&
+            !window.location.pathname.startsWith("/onboarding")
+          ) {
+            window.location.href = `/login?reauth=1&redirect=${encodeURIComponent(window.location.pathname)}`;
+          }
+        } else {
+          // Stale request from a background/switched account; remove only the revoked account from saved list
+          try {
+            const raw = localStorage.getItem("cellsinbox_accounts");
+            if (raw) {
+              const accounts = JSON.parse(raw);
+              const filtered = accounts.filter((a: any) => a.token !== requestToken);
+              localStorage.setItem("cellsinbox_accounts", JSON.stringify(filtered));
+            }
+          } catch {
+            // ignore
+          }
         }
       }
     }

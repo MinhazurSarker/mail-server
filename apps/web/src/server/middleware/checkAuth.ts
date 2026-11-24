@@ -29,7 +29,7 @@ export const checkAuth = async (
 
     const token = authorization.replace(/^Bearer\s+/i, "").trim();
     if (!token) {
-      return redirect(redirectPath || "/login");
+      return redirect(redirectPath || "/login?reauth=1");
     }
 
     // Validate token against auth.me
@@ -41,7 +41,7 @@ export const checkAuth = async (
     );
 
     if (!me || !me.email) {
-      return redirect(redirectPath || "/login");
+      return redirect(redirectPath || "/login?reauth=1");
     }
 
     const authenticatedUser: AuthenticatedUser = {
@@ -56,7 +56,7 @@ export const checkAuth = async (
     };
 
     if (roles.length > 0 && !roles.includes(authenticatedUser.role)) {
-      return redirect(authenticatedUser.role === "MAILBOX_USER" ? "/inbox" : (redirectPath || "/login"));
+      return redirect(authenticatedUser.role === "MAILBOX_USER" ? "/inbox" : (redirectPath || "/login?reauth=1"));
     }
 
     return await callback(authenticatedUser);
@@ -68,6 +68,6 @@ export const checkAuth = async (
     ) {
       throw error;
     }
-    return redirect(redirectPath || "/login");
+    return redirect(redirectPath || "/login?reauth=1");
   }
 };

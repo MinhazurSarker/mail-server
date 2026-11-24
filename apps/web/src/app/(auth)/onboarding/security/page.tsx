@@ -73,7 +73,7 @@ function OnboardingSecurityContent() {
     return () => {
       isMounted = false;
     };
-  }, [userId, router]);
+  }, [challengeToken, userId, router]);
 
   const handleComplete = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,6 +116,7 @@ function OnboardingSecurityContent() {
         displayName: (res.email || email).split("@")[0],
         role: res.role || "MAILBOX_USER",
         token: res.accessToken,
+        refreshToken: res.refreshToken,
       });
 
       router.push("/inbox");

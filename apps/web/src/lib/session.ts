@@ -11,8 +11,12 @@ export function setSessionTokens(accessToken: string, refreshToken?: string): vo
 
   try {
     localStorage.setItem("accessToken", accessToken);
-    if (refreshToken) {
-      localStorage.setItem("refreshToken", refreshToken);
+    if (refreshToken !== undefined) {
+      if (refreshToken) {
+        localStorage.setItem("refreshToken", refreshToken);
+      } else {
+        localStorage.removeItem("refreshToken");
+      }
     }
 
     const isSecure = window.location.protocol === "https:";
@@ -22,16 +26,29 @@ export function setSessionTokens(accessToken: string, refreshToken?: string): vo
   }
 }
 
-export function clearSession(): void {
+export function clearActiveSession(): void {
   if (typeof window === "undefined") return;
 
   try {
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
+    document.cookie = "authorization=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax;";
+  } catch (err) {
+    console.error("Failed to clear active session:", err);
+  }
+}
+
+export function clearSession(): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    clearActiveSession();
     localStorage.removeItem("activeAccountId");
     localStorage.removeItem("cellsinbox_accounts");
-    document.cookie = "authorization=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax;";
   } catch (err) {
     console.error("Failed to clear session:", err);
   }
 }
+
+export const clearAllSessions = clearSession;
+
