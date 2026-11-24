@@ -1,10 +1,9 @@
 "use client";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { useState } from "react";
 import type { DetailsContentProps } from "./types";
+import SafeEmailViewer from "@/components/support/email/safe-email-viewer";
 
 export default function DetailsContent({ email }: DetailsContentProps) {
   const [loadRemoteImages, setLoadRemoteImages] = useState(false);
@@ -12,9 +11,6 @@ export default function DetailsContent({ email }: DetailsContentProps) {
 
   const initial = (email.sender || "U").charAt(0).toUpperCase();
   const hasHtml = Boolean(email.html);
-
-  // Check if HTML contains potential remote images
-  const hasRemoteImages = Boolean(email.html && /<img[^>]+src=["'](http|\/\/)/i.test(email.html));
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
@@ -73,41 +69,14 @@ export default function DetailsContent({ email }: DetailsContentProps) {
         </div>
       </div>
 
-      {/* Remote Images Privacy Shield */}
-      {hasRemoteImages && !loadRemoteImages && (
-        <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
-          <div className="flex items-center gap-2.5">
-            <span className="size-2 rounded-full bg-amber-500 shrink-0" />
-            <span>Remote images have been blocked to protect your privacy and IP address.</span>
-          </div>
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => setLoadRemoteImages(true)}
-            className="border-amber-300 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40"
-          >
-            Load Images
-          </Button>
-        </div>
-      )}
-
-      {/* Body Content */}
-      <div className="min-h-[200px] text-sm leading-relaxed text-gray-700 dark:text-gray-300">
-        {format === "html" && email.html ? (
-          <div
-            className="prose dark:prose-invert max-w-none [&_a]:text-brand-500 [&_a]:underline"
-            dangerouslySetInnerHTML={{
-              __html: loadRemoteImages
-                ? email.html
-                : email.html.replace(/<img[^>]+src=["'](http|\/\/)[^"']*["'][^>]*>/gi, "[Remote image hidden]"),
-            }}
-          />
-        ) : (
-          <div className="whitespace-pre-wrap font-sans">
-            {email.text || email.content}
-          </div>
-        )}
-      </div>
+      {/* Safe Sandboxed Message Body */}
+      <SafeEmailViewer
+        html={email.html}
+        text={email.text || email.content}
+        format={format}
+        allowRemoteImages={loadRemoteImages}
+        onLoadRemoteImages={() => setLoadRemoteImages(true)}
+      />
     </div>
   );
 }

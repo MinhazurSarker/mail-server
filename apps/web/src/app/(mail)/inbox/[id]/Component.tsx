@@ -26,6 +26,7 @@ import {
 } from "@/icons";
 import { Reply } from "lucide-react";
 import { rpcCall } from "@/lib/api";
+import SafeEmailViewer from "@/components/support/email/safe-email-viewer";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -266,46 +267,14 @@ export default function EmailDetailComponent({
           </div>
         </div>
 
-        {/* Remote Images Privacy Shield */}
-        {hasRemoteImages && !loadRemoteImages && (
-          <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
-            <div className="flex items-center gap-2.5">
-              <span className="size-2 rounded-full bg-amber-500 shrink-0" />
-              <span>
-                Remote images blocked to protect your identity and IP address.
-              </span>
-            </div>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => setLoadRemoteImages(true)}
-              className="border-amber-300 text-amber-900 hover:bg-amber-100"
-            >
-              Load Images
-            </Button>
-          </div>
-        )}
-
-        {/* Message Body */}
-        <div className="min-h-[260px] text-sm leading-relaxed text-gray-900 dark:text-gray-100 font-sans">
-          {format === "html" && hasVisibleHtml ? (
-            <div
-              className="max-w-none text-gray-900 dark:text-gray-100 [&_a]:text-brand-500 [&_a]:underline font-sans leading-relaxed break-words"
-              dangerouslySetInnerHTML={{
-                __html: loadRemoteImages
-                  ? email.html!
-                  : email.html!.replace(
-                      /<img([^>]+src=["'])(http|\/\/)([^"'>]+["'][^>]*)>/gi,
-                      '<span class="inline-block p-1 bg-gray-100 dark:bg-gray-800 text-[10px] text-gray-400 rounded">[Blocked Image]</span>'
-                    ),
-              }}
-            />
-          ) : (
-            <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-gray-900 dark:text-gray-100 break-words">
-              {email.text || (email.html ? email.html.replace(/<[^>]+>/g, " ").trim() : "(No message body content)")}
-            </pre>
-          )}
-        </div>
+        {/* Safe Sandboxed Message Body */}
+        <SafeEmailViewer
+          html={email.html}
+          text={email.text}
+          format={format}
+          allowRemoteImages={loadRemoteImages}
+          onLoadRemoteImages={() => setLoadRemoteImages(true)}
+        />
 
         {/* Attachments Section */}
         {email.attachments && email.attachments.length > 0 && (
