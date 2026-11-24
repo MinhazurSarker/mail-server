@@ -13,6 +13,7 @@ export interface IUser extends Document {
   twoFactorEnforced: boolean;
   storageQuotaBytes: number;
   storageUsedBytes: number;
+  storageAccountingVersion: number;
   preferences?: {
     signature?: string;
     autoSaveDrafts?: boolean;
@@ -48,7 +49,8 @@ const UserSchema = new Schema<IUser>(
     hasApiPermission: { type: Boolean, default: false },
     twoFactorEnforced: { type: Boolean, default: true },
     storageQuotaBytes: { type: Number, default: 10737418240 }, // 10 GB
-    storageUsedBytes: { type: Number, default: 0 },
+    storageUsedBytes: { type: Number, default: 0, min: 0 },
+    storageAccountingVersion: { type: Number, default: 0 },
     preferences: {
       signature: { type: String, default: "" },
       autoSaveDrafts: { type: Boolean, default: true },

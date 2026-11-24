@@ -9,6 +9,8 @@ export * from "./models/Message.js";
 export * from "./models/MessageBody.js";
 export * from "./models/Attachment.js";
 export * from "./models/MailboxState.js";
+export * from "./models/MailboxStorageLedger.js";
+export * from "./models/StoragePurgeQueue.js";
 export * from "./models/DeliveryQueue.js";
 export * from "./models/Contact.js";
 export * from "./models/CalendarEvent.js";

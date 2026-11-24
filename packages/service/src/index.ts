@@ -1,4 +1,5 @@
 export * from "./services/StorageService.js";
+export * from "./services/StorageAccountingService.js";
 export * from "./services/OrganizationService.js";
 export * from "./services/DomainService.js";
 export * from "./services/UserService.js";
