@@ -63,85 +63,166 @@ async function main() {
   // Track connected WebSockets by authenticated userId
   const userSockets = new Map<string, Set<WebSocket>>();
 
-  // Wire MailEvents directly to WebSocket broadcast with session freshness validation
-  MailEvents.onMailReceived(async (event) => {
-    const sockets = userSockets.get(event.userId);
-    if (sockets && sockets.size > 0) {
-      const user = await UserModel.findById(event.userId);
-      if (!user || user.status !== "ACTIVE") {
-        for (const ws of sockets) {
-          ws.close(4003, "Account inactive or suspended");
-        }
-        userSockets.delete(event.userId);
-        return;
-      }
+  // Wire MailEvents directly to WebSocket broadcast with session freshness validation (R6, R7)
+  // Non-async wrapper prevents unhandled promise rejections on EventEmitter (R7)
+  MailEvents.onMailReceived((event) => {
+    (async () => {
+      try {
+        const sockets = userSockets.get(event.userId);
+        if (!sockets || sockets.size === 0) return;
 
-      const payload = JSON.stringify({
-        type: "mail:received",
-        data: event,
-      });
-      for (const ws of Array.from(sockets)) {
-        if ((ws as any).tokenVersion !== user.tokenVersion) {
-          ws.close(4001, "Session revoked");
-          sockets.delete(ws);
-          continue;
+        const user = await UserModel.findById(event.userId);
+        if (!user || user.status !== "ACTIVE") {
+          for (const ws of Array.from(sockets)) {
+            try { ws.close(4003, "Account inactive or suspended"); } catch {}
+          }
+          userSockets.delete(event.userId);
+          return;
         }
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(payload);
+
+        // Strict organization status verification before delivering event (R6, R9)
+        if (user.role !== "PLATFORM_ADMIN") {
+          try {
+            await AuthService.assertActiveTenant(user);
+          } catch {
+            for (const ws of Array.from(sockets)) {
+              try { ws.close(4003, "Organization suspended or inactive"); } catch {}
+            }
+            userSockets.delete(event.userId);
+            return;
+          }
         }
+
+        const payload = JSON.stringify({
+          type: "mail:received",
+          data: event,
+        });
+
+        const now = Date.now();
+        const userVersion = user.tokenVersion || 1;
+
+        for (const ws of Array.from(sockets)) {
+          try {
+            // Expiry check (R6)
+            if ((ws as any).expiresAt && now >= (ws as any).expiresAt) {
+              ws.close(4001, "Session expired");
+              sockets.delete(ws);
+              continue;
+            }
+            // Version check (R6)
+            if ((ws as any).tokenVersion !== userVersion) {
+              ws.close(4001, "Session revoked");
+              sockets.delete(ws);
+              continue;
+            }
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(payload);
+            }
+          } catch (sendErr) {
+            console.error("[WebSocket Dispatch] Send error:", sendErr);
+          }
+        }
+      } catch (broadcastErr) {
+        console.error("[MailEvents WebSocket] Broadcast error:", broadcastErr);
       }
-    }
+    })();
   });
 
-  MailEvents.onStateChanged(async (event) => {
-    const sockets = userSockets.get(event.userId);
-    if (sockets && sockets.size > 0) {
-      const user = await UserModel.findById(event.userId);
-      if (!user || user.status !== "ACTIVE") {
-        for (const ws of sockets) {
-          ws.close(4003, "Account inactive or suspended");
-        }
-        userSockets.delete(event.userId);
-        return;
-      }
+  MailEvents.onStateChanged((event) => {
+    (async () => {
+      try {
+        const sockets = userSockets.get(event.userId);
+        if (!sockets || sockets.size === 0) return;
 
-      const payload = JSON.stringify({
-        type: "mail:state_changed",
-        data: event,
-      });
-      for (const ws of Array.from(sockets)) {
-        if ((ws as any).tokenVersion !== user.tokenVersion) {
-          ws.close(4001, "Session revoked");
-          sockets.delete(ws);
-          continue;
+        const user = await UserModel.findById(event.userId);
+        if (!user || user.status !== "ACTIVE") {
+          for (const ws of Array.from(sockets)) {
+            try { ws.close(4003, "Account inactive or suspended"); } catch {}
+          }
+          userSockets.delete(event.userId);
+          return;
         }
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(payload);
+
+        if (user.role !== "PLATFORM_ADMIN") {
+          try {
+            await AuthService.assertActiveTenant(user);
+          } catch {
+            for (const ws of Array.from(sockets)) {
+              try { ws.close(4003, "Organization suspended or inactive"); } catch {}
+            }
+            userSockets.delete(event.userId);
+            return;
+          }
         }
+
+        const payload = JSON.stringify({
+          type: "mail:state_changed",
+          data: event,
+        });
+
+        const now = Date.now();
+        const userVersion = user.tokenVersion || 1;
+
+        for (const ws of Array.from(sockets)) {
+          try {
+            if ((ws as any).expiresAt && now >= (ws as any).expiresAt) {
+              ws.close(4001, "Session expired");
+              sockets.delete(ws);
+              continue;
+            }
+            if ((ws as any).tokenVersion !== userVersion) {
+              ws.close(4001, "Session revoked");
+              sockets.delete(ws);
+              continue;
+            }
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(payload);
+            }
+          } catch (sendErr) {
+            console.error("[WebSocket Dispatch] Send error:", sendErr);
+          }
+        }
+      } catch (broadcastErr) {
+        console.error("[MailEvents WebSocket] Broadcast error:", broadcastErr);
       }
-    }
+    })();
   });
 
   // Attach WebSocket server for real-time mailbox events
   const wss = new WebSocketServer({ server, path: "/ws" });
 
-  async function validateToken(token: string): Promise<{ userId: string; tokenVersion: number } | null> {
+  async function validateToken(token: string): Promise<{
+    userId: string;
+    tokenVersion: number;
+    expiresAt: number;
+  } | null> {
     try {
       const payload = await AuthService.verifyAccessToken(token);
       const user = await UserModel.findById(payload.userId);
       if (!user || user.status !== "ACTIVE") {
         return null;
       }
-      if (user.tokenVersion !== (payload.tokenVersion || 1)) {
+      const userVersion = user.tokenVersion || 1;
+      const payloadVersion = payload.tokenVersion || 1;
+      if (userVersion !== payloadVersion) {
         return null;
       }
-      if (user.role !== "PLATFORM_ADMIN" && user.organizationId) {
-        const org = await OrganizationModel.findById(user.organizationId);
-        if (org && org.status === "SUSPENDED") {
-          return null;
-        }
+      // Strict tenant validation (R9)
+      try {
+        await AuthService.assertActiveTenant(user);
+      } catch {
+        return null;
       }
-      return { userId: user._id.toString(), tokenVersion: user.tokenVersion };
+
+      const exp = (payload as any).exp
+        ? (payload as any).exp * 1000
+        : Date.now() + 24 * 3600 * 1000;
+
+      return {
+        userId: user._id.toString(),
+        tokenVersion: userVersion,
+        expiresAt: exp,
+      };
     } catch {
       return null;
     }
@@ -150,18 +231,30 @@ async function main() {
   wss.on("connection", async (ws, req) => {
     let currentUserId: string | null = null;
 
-    const registerSocket = (userId: string, tokenVersion: number) => {
-      currentUserId = userId;
-      (ws as any).userId = userId;
-      (ws as any).tokenVersion = tokenVersion;
-      if (!userSockets.has(userId)) {
-        userSockets.set(userId, new Set());
+    const registerSocket = (info: { userId: string; tokenVersion: number; expiresAt: number; token: string }) => {
+      if (ws.readyState !== 1) return; // Closed during async authentication
+
+      // If socket was previously registered under a different user, clean up old mapping first
+      if (currentUserId && currentUserId !== info.userId && userSockets.has(currentUserId)) {
+        const oldSet = userSockets.get(currentUserId)!;
+        oldSet.delete(ws);
+        if (oldSet.size === 0) userSockets.delete(currentUserId);
       }
-      userSockets.get(userId)!.add(ws);
+
+      currentUserId = info.userId;
+      (ws as any).userId = info.userId;
+      (ws as any).tokenVersion = info.tokenVersion;
+      (ws as any).expiresAt = info.expiresAt;
+      (ws as any).authToken = info.token;
+
+      if (!userSockets.has(info.userId)) {
+        userSockets.set(info.userId, new Set());
+      }
+      userSockets.get(info.userId)!.add(ws);
       ws.send(
         JSON.stringify({
           type: "authenticated",
-          userId,
+          userId: info.userId,
           timestamp: new Date().toISOString(),
         }),
       );
@@ -175,7 +268,7 @@ async function main() {
         if (token) {
           const valid = await validateToken(token);
           if (valid) {
-            registerSocket(valid.userId, valid.tokenVersion);
+            registerSocket({ ...valid, token });
           } else {
             ws.close(4001, "Invalid, expired, or revoked session token");
             return;
@@ -193,7 +286,7 @@ async function main() {
         if (message.type === "auth" && typeof message.token === "string") {
           const valid = await validateToken(message.token);
           if (valid) {
-            registerSocket(valid.userId, valid.tokenVersion);
+            registerSocket({ ...valid, token: message.token });
           } else {
             ws.send(
               JSON.stringify({
@@ -204,6 +297,18 @@ async function main() {
             ws.close(4001, "Authentication failed");
           }
         } else if (message.type === "ping") {
+          // Re-verify expiry and session freshness during ping (R6)
+          if ((ws as any).expiresAt && Date.now() >= (ws as any).expiresAt) {
+            ws.close(4001, "Session expired");
+            return;
+          }
+          if ((ws as any).authToken) {
+            const stillValid = await validateToken((ws as any).authToken);
+            if (!stillValid) {
+              ws.close(4001, "Session revoked or suspended");
+              return;
+            }
+          }
           ws.send(JSON.stringify({ type: "pong" }));
         }
       } catch (err: any) {
@@ -244,6 +349,34 @@ async function main() {
       }),
     );
   });
+
+  // Periodic idle socket revalidation sweep (R6)
+  const sweepInterval = setInterval(async () => {
+    for (const [userId, sockets] of userSockets.entries()) {
+      for (const ws of sockets) {
+        if (ws.readyState !== 1) {
+          sockets.delete(ws);
+          continue;
+        }
+        const token = (ws as any).authToken;
+        if (token) {
+          const valid = await validateToken(token);
+          if (!valid) {
+            try {
+              ws.close(4001, "Session expired, revoked, or suspended");
+            } catch {
+              // ignore
+            }
+            sockets.delete(ws);
+          }
+        }
+      }
+      if (sockets.size === 0) {
+        userSockets.delete(userId);
+      }
+    }
+  }, 30000);
+  sweepInterval.unref();
 
   server.listen(env.API_PORT, env.API_HOST, () => {
     console.log(
