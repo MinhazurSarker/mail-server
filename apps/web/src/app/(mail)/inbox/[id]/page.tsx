@@ -42,6 +42,8 @@ export default function EmailDetailPage({
             dkimStatus: m.dkimResult || m.dkimStatus || "pass",
             dmarcStatus: m.dmarcResult || m.dmarcStatus || "pass",
             attachments: (m.attachments || []).map((att: any) => ({
+              id: att.id || att._id,
+              _id: att._id || att.id,
               filename: att.filename || "file",
               size: att.size || att.sizeBytes || 0,
               contentType: att.contentType || "application/octet-stream",

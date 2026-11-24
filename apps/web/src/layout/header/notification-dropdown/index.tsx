@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  Avatar,
-  AvatarBadge,
-  AvatarFallback,
-  AvatarImage,
-} from "@/components/ui/avatar";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,23 +10,28 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Link } from "@/i18n/navigation";
-import { BellIcon, DotIcon, XIcon } from "@/icons";
-import { cn, getInitials } from "@/utils";
-import { useTranslations } from "next-intl";
-import { Fragment, useState } from "react";
-import { notifications } from "./data";
+import { BellIcon, DotIcon, XIcon, InfoCircleIcon, LockIcon } from "@/icons";
+import { cn } from "@/utils";
+import { notifications as initialNotifications } from "./data";
+import type { NotificationItem } from "./types";
 
 export default function NotificationDropdown() {
-  const t = useTranslations("header.notifications");
+  const [items, setItems] = useState<NotificationItem[]>(initialNotifications);
   const [isOpen, setIsOpen] = useState(false);
-  const [notifying, setNotifying] = useState(true);
+  const [notifying, setNotifying] = useState(
+    initialNotifications.some((n) => !n.read)
+  );
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
     if (open) {
       setNotifying(false);
     }
+  };
+
+  const handleMarkAllRead = () => {
+    setItems((prev) => prev.map((n) => ({ ...n, read: true })));
+    setNotifying(false);
   };
 
   return (
@@ -63,65 +63,78 @@ export default function NotificationDropdown() {
         className="w-87.5 overflow-hidden p-3 sm:w-90.25 dark:bg-[#1E2635]"
       >
         <div className="flex items-center justify-between pb-3">
-          <h5 className="text-title-sm font-semibold text-gray-800 dark:text-gray-200">
-            {t("title")}
+          <h5 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+            Notifications
           </h5>
           <Button
             variant="ghost"
             size="icon-xs"
             onClick={() => setIsOpen(false)}
-            className="size-"
             aria-label="Close notifications"
           >
-            <XIcon className="size-5" />
+            <XIcon className="size-4" />
           </Button>
         </div>
 
         <DropdownMenuSeparator className="my-0" />
 
-        <ScrollArea className="h-96">
-          <div className="flex flex-col pe-2">
-            {notifications.map((item) => (
-              <Fragment key={item.id}>
-                <DropdownMenuItem className="flex items-start gap-3 rounded-lg p-3 hover:bg-gray-100 dark:hover:bg-white/5">
-                  <Avatar size="default">
-                    <AvatarImage src={item.avatar} alt={item.name} />
-                    <AvatarFallback>{getInitials(item.name)}</AvatarFallback>
-                    <AvatarBadge variant={item.status} />
-                  </Avatar>
-                  <span className="block flex-1 text-start">
-                    <span className="mb-1.5 block space-x-1 text-sm text-gray-500 dark:text-gray-400">
-                      <span className="font-medium text-gray-800 dark:text-white/90">
-                        {item.name}
-                      </span>{" "}
-                      <span>{t(item.actionKey)}</span>{" "}
-                      <span className="font-medium text-gray-800 dark:text-white/90">
-                        {item.project}
-                      </span>
-                    </span>
-                    <span className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                      <span>{t("project")}</span>
-                      <DotIcon className="size-2 text-gray-400 dark:text-gray-500" />
-                      <span>{t(item.timeKey, { count: item.timeCount })}</span>
-                    </span>
-                  </span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator className="my-0.5 bg-gray-100 last-of-type:hidden dark:bg-gray-700" />
-              </Fragment>
-            ))}
+        {items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+            <div className="flex size-11 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 mb-3">
+              <BellIcon className="size-5" />
+            </div>
+            <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+              No new notifications
+            </p>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 max-w-[240px]">
+              You're all caught up! Mailbox notices and security alerts will appear here.
+            </p>
           </div>
-        </ScrollArea>
-
-        <Button
-          variant="outline"
-          size="default"
-          nativeButton={false}
-          render={<Link href="/" />}
-          className="mt-3 w-full"
-          onClick={() => setIsOpen(false)}
-        >
-          {t("viewAll")}
-        </Button>
+        ) : (
+          <>
+            <ScrollArea className="max-h-80">
+              <div className="flex flex-col pe-2 py-1">
+                {items.map((item) => (
+                  <div key={item.id}>
+                    <DropdownMenuItem className="flex items-start gap-3 rounded-lg p-3 hover:bg-gray-100 dark:hover:bg-white/5 cursor-pointer">
+                      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-500 dark:bg-brand-950/40 dark:text-brand-400 mt-0.5">
+                        {item.type === "security" ? (
+                          <LockIcon className="size-4" />
+                        ) : (
+                          <InfoCircleIcon className="size-4" />
+                        )}
+                      </div>
+                      <div className="flex-1 text-start min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate">
+                            {item.title}
+                          </p>
+                          <span className="text-[10px] text-gray-400 shrink-0">
+                            {item.time}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">
+                          {item.message}
+                        </p>
+                      </div>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator className="my-0.5 bg-gray-100 last-of-type:hidden dark:bg-gray-700" />
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+            <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800 flex justify-end">
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={handleMarkAllRead}
+                className="text-xs text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                Mark all as read
+              </Button>
+            </div>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

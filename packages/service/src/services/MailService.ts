@@ -543,20 +543,21 @@ export class MailService {
    */
   static async getAttachmentContent(params: {
     userId: string;
-    messageId: string;
+    messageId?: string;
     attachmentId: string;
   }): Promise<{ filename: string; contentType: string; data: string }> {
-    const state = await MailboxStateModel.findOne({
-      userId: params.userId,
-      messageId: params.messageId,
-    });
-    if (!state) {
-      throw new Error("Unauthorized: Message not in user mailbox");
-    }
-
     const attachment = await AttachmentModel.findById(params.attachmentId);
     if (!attachment) {
       throw new Error("Attachment not found");
+    }
+
+    // Verify user has mailbox access to the message containing this attachment
+    const state = await MailboxStateModel.findOne({
+      userId: params.userId,
+      messageId: attachment.messageId,
+    });
+    if (!state) {
+      throw new Error("Unauthorized: Message not in user mailbox");
     }
 
     const user = await UserModel.findById(params.userId);

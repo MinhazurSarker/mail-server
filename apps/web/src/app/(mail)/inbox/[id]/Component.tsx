@@ -18,6 +18,10 @@ import {
   ArrowLeftIcon,
   DownloadIcon,
   FileIcon,
+  FileImageIcon,
+  FilePdfIcon,
+  ArchiveIcon,
+  EyeIcon,
   MailIcon,
   RefreshIcon,
   SendIcon,
@@ -32,6 +36,20 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getAttachmentMeta(filename: string, contentType?: string) {
+  const ext = (filename.split(".").pop() || "").toLowerCase();
+  const isImage = Boolean(
+    (contentType && contentType.startsWith("image/")) ||
+      ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext)
+  );
+  const isPdf = Boolean(contentType === "application/pdf" || ext === "pdf");
+  const isArchive = Boolean(
+    ["zip", "z", "rar", "tar", "gz", "7z"].includes(ext) ||
+      (contentType && contentType.includes("zip"))
+  );
+  return { isImage, isPdf, isArchive, isPreviewable: isImage || isPdf };
 }
 
 export interface EmailMessageData {
@@ -51,6 +69,8 @@ export interface EmailMessageData {
   dkimStatus?: string;
   dmarcStatus?: string;
   attachments?: Array<{
+    id?: string;
+    _id?: string;
     filename: string;
     size: number;
     contentType?: string;
@@ -71,6 +91,11 @@ export default function EmailDetailComponent({
   const [rawEmlContent, setRawEmlContent] = useState("");
   const [loadingRaw, setLoadingRaw] = useState(false);
   const [copiedRaw, setCopiedRaw] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<{
+    title: string;
+    url: string;
+  } | null>(null);
 
   const initial = (email.sender || email.email || "U")
     .charAt(0)
@@ -83,29 +108,121 @@ export default function EmailDetailComponent({
     email.html && /<img[^>]+src=["'](http|\/\/)/i.test(email.html)
   );
 
-  const handleDownloadAttachment = (att: any) => {
-    if (att.downloadUrl) {
-      window.open(att.downloadUrl, "_blank");
-      return;
-    }
+  const fetchAttachmentBlob = async (
+    att: any
+  ): Promise<{ url: string; blob: Blob } | null> => {
     if (att.content) {
       const byteChars = atob(att.content);
-      const byteNums = new Array(byteChars.length);
+      const byteNums = new Uint8Array(byteChars.length);
       for (let i = 0; i < byteChars.length; i++) {
         byteNums[i] = byteChars.charCodeAt(i);
       }
-      const byteArray = new Uint8Array(byteNums);
-      const blob = new Blob([byteArray], {
+      const blob = new Blob([byteNums], {
         type: att.contentType || "application/octet-stream",
       });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = att.filename || "attachment";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      return { url: URL.createObjectURL(blob), blob };
+    }
+
+    if (
+      att.downloadUrl &&
+      (att.downloadUrl.startsWith("http://") ||
+        att.downloadUrl.startsWith("https://"))
+    ) {
+      return { url: att.downloadUrl, blob: new Blob() };
+    }
+
+    const attId = att.id || att._id;
+    if (!attId) {
+      throw new Error("Attachment identifier missing");
+    }
+
+    const res = await rpcCall<{
+      filename: string;
+      contentType: string;
+      data: string;
+    }>("mail", "attachment-content", {
+      messageId: email.id || email._id,
+      attachmentId: attId,
+    });
+
+    if (!res?.data) {
+      throw new Error("No data returned for attachment");
+    }
+
+    const byteChars = atob(res.data);
+    const byteNums = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+      byteNums[i] = byteChars.charCodeAt(i);
+    }
+    const blob = new Blob([byteNums], {
+      type: res.contentType || att.contentType || "application/octet-stream",
+    });
+    return { url: URL.createObjectURL(blob), blob };
+  };
+
+  const handleDownloadAttachment = async (att: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const attKey = att.id || att._id || att.filename;
+    setDownloadingId(attKey);
+    try {
+      const result = await fetchAttachmentBlob(att);
+      if (!result) return;
+
+      if (
+        result.url.startsWith("http://") ||
+        result.url.startsWith("https://")
+      ) {
+        const a = document.createElement("a");
+        a.href = result.url;
+        a.download = att.filename || "attachment";
+        a.target = "_blank";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else {
+        const a = document.createElement("a");
+        a.href = result.url;
+        a.download = att.filename || "attachment";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(result.url), 20000);
+      }
+    } catch (err: any) {
+      console.error("Failed to download attachment:", err);
+      alert("Failed to download attachment: " + (err.message || "Unknown error"));
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const handlePreviewAttachment = async (att: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const meta = getAttachmentMeta(att.filename, att.contentType);
+
+    if (!meta.isPreviewable) {
+      return handleDownloadAttachment(att);
+    }
+
+    const attKey = att.id || att._id || att.filename;
+    setDownloadingId(attKey);
+    try {
+      const result = await fetchAttachmentBlob(att);
+      if (!result) return;
+
+      if (meta.isPdf) {
+        window.open(result.url, "_blank");
+      } else {
+        setPreviewImage({
+          title: att.filename,
+          url: result.url,
+        });
+      }
+    } catch (err: any) {
+      console.error("Failed to preview attachment:", err);
+      alert("Failed to preview attachment: " + (err.message || "Unknown error"));
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -279,30 +396,75 @@ export default function EmailDetailComponent({
         {/* Attachments Section */}
         {email.attachments && email.attachments.length > 0 && (
           <div className="border-t border-gray-100 pt-5 dark:border-gray-800">
-            <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">
-              Attachments ({email.attachments.length})
+            <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-2">
+              <PaperClipIcon className="size-4" />
+              <span>Attachments ({email.attachments.length})</span>
             </h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-              {email.attachments.map((att, index) => (
-                <div
-                  key={index}
-                  onClick={() => handleDownloadAttachment(att)}
-                  className="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50/50 hover:bg-gray-100 dark:border-gray-800 dark:bg-white/2 dark:hover:bg-white/5 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-2.5 overflow-hidden">
-                    <FileIcon className="size-5 text-brand-500 shrink-0" />
-                    <div className="truncate">
-                      <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">
-                        {att.filename}
-                      </p>
-                      <p className="text-[10px] text-gray-400">
-                        {formatBytes(att.size)}
-                      </p>
+              {email.attachments.map((att, index) => {
+                const meta = getAttachmentMeta(att.filename, att.contentType);
+                const attKey = att.id || att._id || att.filename || String(index);
+                const isWorking = downloadingId === attKey;
+
+                return (
+                  <div
+                    key={attKey}
+                    onClick={() =>
+                      meta.isPreviewable
+                        ? handlePreviewAttachment(att)
+                        : handleDownloadAttachment(att)
+                    }
+                    className="group flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50/50 hover:bg-gray-100 hover:border-brand-300 dark:border-gray-800 dark:bg-white/2 dark:hover:bg-white/5 dark:hover:border-brand-500/40 cursor-pointer transition-all"
+                  >
+                    <div className="flex items-center gap-2.5 overflow-hidden">
+                      {meta.isImage ? (
+                        <FileImageIcon className="size-5 text-emerald-500 shrink-0" />
+                      ) : meta.isPdf ? (
+                        <FilePdfIcon className="size-5 text-red-500 shrink-0" />
+                      ) : meta.isArchive ? (
+                        <ArchiveIcon className="size-5 text-amber-500 shrink-0" />
+                      ) : (
+                        <FileIcon className="size-5 text-brand-500 shrink-0" />
+                      )}
+                      <div className="truncate">
+                        <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate group-hover:text-brand-600 dark:group-hover:text-brand-400">
+                          {att.filename}
+                        </p>
+                        <p className="text-[10px] text-gray-400">
+                          {formatBytes(att.size)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0 ms-2">
+                      {isWorking ? (
+                        <div className="size-4 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+                      ) : (
+                        <>
+                          {meta.isPreviewable && (
+                            <button
+                              type="button"
+                              onClick={(e) => handlePreviewAttachment(att, e)}
+                              title={meta.isPdf ? "Open PDF in new tab" : "Preview image"}
+                              className="p-1 rounded text-gray-400 hover:text-brand-500 hover:bg-white dark:hover:bg-white/10 transition-colors"
+                            >
+                              <EyeIcon className="size-4" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleDownloadAttachment(att, e)}
+                            title="Download file"
+                            className="p-1 rounded text-gray-400 hover:text-brand-500 hover:bg-white dark:hover:bg-white/10 transition-colors"
+                          >
+                            <DownloadIcon className="size-4" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
-                  <DownloadIcon className="size-4 text-gray-400 hover:text-brand-500 shrink-0 ms-2" />
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -346,6 +508,48 @@ export default function EmailDetailComponent({
               <div className="text-gray-400 py-6 text-center">Loading raw source...</div>
             ) : (
               <pre className="whitespace-pre-wrap">{rawEmlContent}</pre>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Attachment Image Preview Dialog */}
+      <Dialog
+        open={Boolean(previewImage)}
+        onOpenChange={(open) => !open && setPreviewImage(null)}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-4">
+          <DialogHeader className="flex flex-row items-center justify-between pb-3 border-b border-gray-200 dark:border-gray-800">
+            <DialogTitle className="text-sm font-semibold truncate max-w-md">
+              {previewImage?.title}
+            </DialogTitle>
+            <div className="flex items-center gap-2">
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => {
+                  if (previewImage) {
+                    const a = document.createElement("a");
+                    a.href = previewImage.url;
+                    a.download = previewImage.title;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  }
+                }}
+                className="gap-1.5"
+              >
+                <DownloadIcon className="size-3.5" />
+                Download
+              </Button>
+            </div>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-gray-100 dark:bg-gray-900 rounded-xl mt-3 min-h-[320px]">
+            {previewImage && (
+              <img
+                src={previewImage.url}
+                alt={previewImage.title}
+                className="max-h-[70vh] max-w-full object-contain rounded-lg shadow-sm"
+              />
             )}
           </div>
         </DialogContent>

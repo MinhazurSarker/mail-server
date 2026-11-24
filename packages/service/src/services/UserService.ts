@@ -1,6 +1,6 @@
 import argon2 from "argon2";
 import crypto from "node:crypto";
-import { UserModel, type IUser } from "@cellsinbox/db";
+import { UserModel, AuthChallengeModel, type IUser } from "@cellsinbox/db";
 
 export class UserService {
   static async createUser(data: {
@@ -126,15 +126,36 @@ export class UserService {
     const user = await UserModel.findById(userId);
     if (!user) throw new Error("User not found.");
 
-    const isValid = await argon2.verify(user.passwordHash, currentPass);
+    let isValid = false;
+    if (
+      user.passwordHash &&
+      typeof user.passwordHash === "string" &&
+      user.passwordHash.startsWith("$")
+    ) {
+      try {
+        isValid = await argon2.verify(user.passwordHash, currentPass);
+      } catch {
+        isValid = false;
+      }
+    }
     if (!isValid) {
       throw new Error("Current password is incorrect.");
     }
 
     const newHash = await argon2.hash(newPass);
-    user.passwordHash = newHash;
-    user.tokenVersion = (user.tokenVersion || 1) + 1;
-    await user.save();
+    await UserModel.updateOne(
+      { _id: userId },
+      {
+        $set: { passwordHash: newHash },
+        $inc: { tokenVersion: 1 },
+      },
+    );
+
+    // Invalidate any outstanding pending authentication challenges (R5)
+    await AuthChallengeModel.updateMany(
+      { userId, status: "PENDING" },
+      { $set: { status: "EXPIRED" } },
+    );
   }
 }
 

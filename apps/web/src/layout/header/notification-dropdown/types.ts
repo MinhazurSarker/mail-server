@@ -1,10 +1,8 @@
 export interface NotificationItem {
   id: string;
-  name: string;
-  avatar: string;
-  actionKey: "requestsPermission";
-  project: string;
-  timeKey: "minAgo" | "hrAgo";
-  timeCount: number;
-  status: "online" | "offline" | "busy";
+  title: string;
+  message: string;
+  time: string;
+  type?: "info" | "warning" | "success" | "security";
+  read?: boolean;
 }

@@ -103,8 +103,9 @@ export class StorageService {
     expiresInSeconds: number = 3600,
   ): Promise<string> {
     if (!config.provider || config.provider === "local_fallback") {
-      const fullPath = path.join(this.getLocalDir(config), key);
-      return `file://${fullPath}`;
+      // In local fallback mode, there is no remote presigned S3/R2 URL.
+      // Returning file:// is blocked by browser security sandboxes.
+      return "";
     }
 
     const client = this.createClient(config);
@@ -117,8 +118,35 @@ export class StorageService {
 
   static async getRawFile(config: StorageConfig, key: string): Promise<Buffer> {
     if (!config.provider || config.provider === "local_fallback") {
-      const fullPath = path.join(this.getLocalDir(config), key);
-      return await fs.readFile(fullPath);
+      const primaryDir = this.getLocalDir(config);
+      const primaryPath = path.join(primaryDir, key);
+      try {
+        await fs.access(primaryPath);
+        return await fs.readFile(primaryPath);
+      } catch {
+        // Check candidate fallback directories if running across different package cwds
+        const candidateBases = [
+          path.resolve(process.cwd(), "storage/blobs"),
+          path.resolve(process.cwd(), "../storage/blobs"),
+          path.resolve(process.cwd(), "../../storage/blobs"),
+          path.resolve(process.cwd(), "../server/storage/blobs"),
+          path.resolve(process.cwd(), "../../apps/server/storage/blobs"),
+          path.resolve(process.cwd(), "../api-server/storage/blobs"),
+          path.resolve(process.cwd(), "../../apps/api-server/storage/blobs"),
+        ];
+
+        for (const base of candidateBases) {
+          const candidatePath = path.join(base, key);
+          try {
+            await fs.access(candidatePath);
+            return await fs.readFile(candidatePath);
+          } catch {
+            // continue search
+          }
+        }
+
+        return await fs.readFile(primaryPath);
+      }
     }
 
     const client = this.createClient(config);
