@@ -24,6 +24,23 @@ if (envPath) {
   config({ path: envPath });
 }
 
+/**
+ * Robust boolean parser for environment variables.
+ * In standard Zod, z.coerce.boolean() evaluates Boolean("false") -> true!
+ * This helper explicitly handles string representations ("true", "false", "1", "0", etc.).
+ */
+export const booleanEnv = (defaultValue: boolean) =>
+  z
+    .union([z.boolean(), z.string()])
+    .transform((val) => {
+      if (typeof val === "boolean") return val;
+      const lower = val.trim().toLowerCase();
+      if (lower === "true" || lower === "1" || lower === "yes") return true;
+      if (lower === "false" || lower === "0" || lower === "no" || lower === "") return false;
+      return defaultValue;
+    })
+    .default(defaultValue);
+
 export const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 
@@ -55,7 +72,7 @@ export const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().email().optional(),
-  SMTP_SECURE: z.coerce.boolean().default(false).optional(),
+  SMTP_SECURE: booleanEnv(false).optional(),
   SMTP_TLS_KEY_PATH: z.string().optional(),
   SMTP_TLS_CERT_PATH: z.string().optional(),
   MAIL_HELO_HOST: z.string().default("mail.cells.local").optional(),
@@ -71,7 +88,7 @@ export const envSchema = z.object({
 
   API_HOST: z.string().default("0.0.0.0").optional(),
   API_PORT: z.coerce.number().default(4000).optional(),
-  API_DOCS_ENABLED: z.coerce.boolean().default(true).optional(),
+  API_DOCS_ENABLED: booleanEnv(true).optional(),
   API_LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info")
@@ -82,18 +99,20 @@ export const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-// Lazy initialization - only validates at runtime, not during build
+// Lazy initialization - only validates at runtime, not during Next.js static build phase
 let _env: Env | null = null;
 
-// Check if we're in Next.js build mode
-const isBuildTime =
-  process.env.NEXT_PHASE === "phase-production-build" ||
-  (process.env.NODE_ENV === "production" && !envPath);
+/**
+ * Resets cached env object (primarily for unit testing different environment states).
+ */
+export function _resetEnvCache(): void {
+  _env = null;
+}
 
 export const env = new Proxy({} as Env, {
   get(_, prop: string) {
-    // Skip validation during build time - return undefined
-    if (isBuildTime) {
+    // Skip validation strictly during Next.js static build phase to allow page trace collection
+    if (process.env.NEXT_PHASE === "phase-production-build") {
       return undefined;
     }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import QRCode from "qrcode";
 import { rpcCall } from "@/lib/api";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,12 +22,14 @@ function OnboardingSecurityContent() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [totpSecret, setTotpSecret] = useState("");
   const [otpauthUri, setOtpauthUri] = useState("");
+  const [qrDataUrl, setQrDataUrl] = useState("");
   const [totpToken, setTotpToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [setupLoading, setSetupLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
     if (!userId) {
       router.push("/login");
       return;
@@ -34,13 +37,36 @@ function OnboardingSecurityContent() {
 
     rpcCall<{ secret: string; otpauthUri: string }>("auth", "totp-setup", { userId })
       .then((res) => {
+        if (!isMounted) return;
         setTotpSecret(res.secret);
         setOtpauthUri(res.otpauthUri);
+        if (res.otpauthUri) {
+          QRCode.toDataURL(res.otpauthUri, {
+            width: 180,
+            margin: 2,
+            color: {
+              dark: "#000000",
+              light: "#ffffff",
+            },
+          })
+            .then((url) => {
+              if (isMounted) setQrDataUrl(url);
+            })
+            .catch((qrErr) => {
+              console.error("Local QR generation failed:", qrErr);
+            });
+        }
       })
       .catch((err) => {
-        setError(err.message || "Failed to initialize 2-Step Verification.");
+        if (isMounted) setError(err.message || "Failed to initialize 2-Step Verification.");
       })
-      .finally(() => setSetupLoading(false));
+      .finally(() => {
+        if (isMounted) setSetupLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, [userId, router]);
 
   const handleComplete = async (e: React.FormEvent) => {
@@ -154,12 +180,18 @@ function OnboardingSecurityContent() {
               ) : (
                 <>
                   <div className="flex flex-col items-center justify-center p-3 bg-white rounded-md">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(otpauthUri)}`}
-                      alt="Authenticator QR"
-                      className="size-36 rounded"
-                    />
+                    {qrDataUrl ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={qrDataUrl}
+                        alt="Authenticator QR"
+                        className="size-36 rounded"
+                      />
+                    ) : (
+                      <div className="size-36 flex items-center justify-center text-xs text-muted-foreground animate-pulse">
+                        Generating QR...
+                      </div>
+                    )}
                   </div>
                   <div className="text-center">
                     <span className="text-xs text-muted-foreground">Or enter manual key:</span>
