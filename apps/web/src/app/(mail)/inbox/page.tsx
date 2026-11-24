@@ -135,7 +135,7 @@ function InboxContent() {
       const items = Array.isArray(res) ? res : res?.messages || res?.items || [];
 
       const formatted: MailItem[] = items.map((m: any) => ({
-        id: m.id || m._id,
+        id: m.messageId || m.id || m._id,
         sender: m.from?.name || m.from?.address?.split("@")[0] || m.sender || "Unknown",
         email: m.from?.address || m.senderEmail || m.email || "user@domain.com",
         subject: m.subject || "(no subject)",

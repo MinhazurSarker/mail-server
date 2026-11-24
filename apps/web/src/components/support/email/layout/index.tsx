@@ -1,8 +1,6 @@
 "use client";
 
 import { SidebarProvider } from "@/components/ui/sidebar";
-import { useState } from "react";
-import ComposeDialog from "./compose-dialog";
 import InboxMobileHeader from "./mobile-header";
 import InboxSidebar from "./sidebar";
 
@@ -32,23 +30,9 @@ export default function InboxLayout({
   onSelectLabel,
   counts,
   onCompose,
-  isComposeOpen: controlledComposeOpen,
-  setIsComposeOpen: controlledSetComposeOpen,
-  composeInitialTo,
-  composeInitialSubject,
-  composeInitialBody,
-  onComposeSent,
-  maxSingleFileSizeBytes,
-  maxAttachmentCount,
 }: InboxLayoutProps) {
-  const [internalComposeOpen, setInternalComposeOpen] = useState(false);
-
-  const isComposeOpen = controlledComposeOpen !== undefined ? controlledComposeOpen : internalComposeOpen;
-  const setIsComposeOpen = controlledSetComposeOpen || setInternalComposeOpen;
-
   const handleOpenCompose = () => {
     if (onCompose) onCompose();
-    setIsComposeOpen(true);
   };
 
   return (
@@ -68,17 +52,6 @@ export default function InboxLayout({
         <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
           {children}
         </main>
-
-        <ComposeDialog
-          open={isComposeOpen}
-          onOpenChange={setIsComposeOpen}
-          initialTo={composeInitialTo}
-          initialSubject={composeInitialSubject}
-          initialBody={composeInitialBody}
-          onSent={onComposeSent}
-          maxSingleFileSizeBytes={maxSingleFileSizeBytes}
-          maxAttachmentCount={maxAttachmentCount}
-        />
       </div>
     </SidebarProvider>
   );

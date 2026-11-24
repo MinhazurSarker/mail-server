@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import PageBreadcrumb from "@/components/common/page-breadcrumb";
 import MetricCard from "@/components/common/metric-card";
@@ -180,17 +181,15 @@ export default function PlatformAdminPage() {
               <RefreshIcon className={`size-4 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                setShowOnboard(true);
-                setOnboardSuccess(null);
-              }}
-              className="gap-1.5 cursor-pointer"
-            >
-              <PlusIcon className="size-4" />
-              Onboard Organization
-            </Button>
+            <Link href="/org/new">
+              <Button
+                size="sm"
+                className="gap-1.5 cursor-pointer"
+              >
+                <PlusIcon className="size-4" />
+                Onboard Organization
+              </Button>
+            </Link>
           </div>
         </div>
 

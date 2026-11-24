@@ -319,6 +319,16 @@ export class MailService {
 
     if (isValidObjectId(params.messageId)) {
       message = await MessageModel.findById(params.messageId);
+      if (!message) {
+        // params.messageId might be a MailboxState ID
+        const stateById = await MailboxStateModel.findById(params.messageId);
+        if (stateById) {
+          message = await MessageModel.findById(stateById.messageId);
+          if (message) {
+            targetMessageId = message._id.toString();
+          }
+        }
+      }
     }
     if (!message) {
       message = await MessageModel.findOne({ messageId: params.messageId });
@@ -331,10 +341,17 @@ export class MailService {
       throw new Error("Underlying message entity not found");
     }
 
-    const state = await MailboxStateModel.findOne({
+    let state = await MailboxStateModel.findOne({
       userId: params.userId,
       messageId: targetMessageId,
     });
+
+    if (!state && isValidObjectId(params.messageId)) {
+      state = await MailboxStateModel.findOne({
+        _id: params.messageId,
+        userId: params.userId,
+      });
+    }
 
     if (!state) {
       throw new Error("Message not found in user mailbox");
@@ -433,7 +450,15 @@ export class MailService {
     if (params.labels !== undefined) update.labels = params.labels;
 
     let targetMessageId = params.messageId;
-    if (!isValidObjectId(params.messageId)) {
+    if (isValidObjectId(params.messageId)) {
+      const stateById = await MailboxStateModel.findOne({
+        _id: params.messageId,
+        userId: params.userId,
+      });
+      if (stateById) {
+        targetMessageId = stateById.messageId.toString();
+      }
+    } else {
       const msg = await MessageModel.findOne({ messageId: params.messageId });
       if (msg) targetMessageId = msg._id.toString();
     }
@@ -466,9 +491,19 @@ export class MailService {
     permanent?: boolean;
   }): Promise<boolean> {
     if (params.permanent) {
+      let targetMessageId = params.messageId;
+      if (isValidObjectId(params.messageId)) {
+        const stateById = await MailboxStateModel.findOne({
+          _id: params.messageId,
+          userId: params.userId,
+        });
+        if (stateById) {
+          targetMessageId = stateById.messageId.toString();
+        }
+      }
       await MailboxStateModel.findOneAndDelete({
         userId: params.userId,
-        messageId: params.messageId,
+        messageId: targetMessageId,
       });
       return true;
     }
