@@ -712,6 +712,63 @@ export class AuthService {
     return { options, challengeToken };
   }
 
+  /**
+   * Generates genuine WebAuthn registration options for an onboarding user (Priority 5).
+   * Binds the passkey challenge and expected origin/RPID directly to the FIRST_LOGIN_ONBOARDING challenge document.
+   */
+  static async generateOnboardingPasskeyOptions(challengeToken: string, host?: string) {
+    if (!challengeToken || challengeToken.trim().length < 16) {
+      throw new Error("Invalid or missing onboarding challenge token.");
+    }
+
+    const challengeHash = crypto.createHash("sha256").update(challengeToken.trim()).digest("hex");
+    const challenge = await AuthChallengeModel.findOne({
+      challengeHash,
+      type: "FIRST_LOGIN_ONBOARDING",
+      status: "PENDING",
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!challenge || !challenge.userId) {
+      throw new Error("Onboarding challenge expired or invalid. Please sign in again.");
+    }
+
+    const user = await UserModel.findById(challenge.userId);
+    if (!user) {
+      throw new Error("User account associated with challenge not found.");
+    }
+
+    await this.assertActiveTenant(user);
+
+    const { cleanHost, expectedOrigin } = this.resolveHostAndOrigin(host);
+
+    const options = await generateRegistrationOptions({
+      rpName: "CellsInbox Sovereign Mail",
+      rpID: cleanHost,
+      userID: new TextEncoder().encode(user._id.toString()),
+      userName: user.email,
+      userDisplayName: user.displayName || user.email,
+      attestationType: "none",
+      authenticatorSelection: {
+        residentKey: "preferred",
+        userVerification: "preferred",
+      },
+    });
+
+    await AuthChallengeModel.updateOne(
+      { _id: challenge._id },
+      {
+        $set: {
+          passkeyChallenge: options.challenge,
+          expectedRPID: cleanHost,
+          expectedOrigin,
+        },
+      },
+    );
+
+    return { options };
+  }
+
   static async verifyPasskeyRegistration(
     user: IUser,
     response: RegistrationResponseJSON,

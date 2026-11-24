@@ -12,7 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { ShieldCheck, AlertCircle, QrCode } from "lucide-react";
+import { ShieldCheck, AlertCircle, QrCode, Fingerprint, CheckCircle2 } from "lucide-react";
+import { startRegistration } from "@simplewebauthn/browser";
 
 function OnboardingSecurityContent() {
   const router = useRouter();
@@ -27,6 +28,9 @@ function OnboardingSecurityContent() {
   const [otpauthUri, setOtpauthUri] = useState("");
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [totpToken, setTotpToken] = useState("");
+  const [method, setMethod] = useState<"totp" | "passkey">("totp");
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [passkeyResponse, setPasskeyResponse] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [setupLoading, setSetupLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +79,23 @@ function OnboardingSecurityContent() {
     };
   }, [challengeToken, userId, router]);
 
+  const handleRegisterPasskey = async () => {
+    setError(null);
+    setPasskeyLoading(true);
+    try {
+      const optRes = await rpcCall<{ options: any }>("auth", "passkey-onboarding-options", {
+        challengeToken,
+      });
+
+      const response = await startRegistration({ optionsJSON: optRes.options });
+      setPasskeyResponse(response);
+    } catch (err: any) {
+      setError(err?.message || "Passkey registration failed or was cancelled.");
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
+
   const handleComplete = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -89,8 +110,13 @@ function OnboardingSecurityContent() {
       return;
     }
 
-    if (!totpToken || totpToken.trim().length !== 6) {
+    if (method === "totp" && (!totpToken || totpToken.trim().length !== 6)) {
       setError("Please enter the 6-digit verification code from your authenticator app.");
+      return;
+    }
+
+    if (method === "passkey" && !passkeyResponse) {
+      setError("Please click 'Register Passkey' to register Touch ID, Face ID, or a security key.");
       return;
     }
 
@@ -106,7 +132,8 @@ function OnboardingSecurityContent() {
       }>("auth", "onboarding-complete", {
         challengeToken,
         newPassword: newPassword || undefined,
-        totpToken: totpToken.trim(),
+        totpToken: method === "totp" ? totpToken.trim() : undefined,
+        passkeyResponse: method === "passkey" ? passkeyResponse : undefined,
       });
 
       setSessionTokens(res.accessToken, res.refreshToken);
@@ -121,7 +148,7 @@ function OnboardingSecurityContent() {
 
       router.push("/inbox");
     } catch (err: any) {
-      setError(err.message || "Failed to complete security setup. Check your 6-digit code.");
+      setError(err.message || "Failed to complete security setup.");
     } finally {
       setLoading(false);
     }
@@ -181,60 +208,125 @@ function OnboardingSecurityContent() {
               )}
             </div>
 
-            <div className="rounded-lg border border-border p-4 bg-muted/40 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <QrCode className="size-4 text-primary" />
-                  <span className="font-semibold text-sm">Scan with Authenticator App</span>
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <Button
+                type="button"
+                variant={method === "totp" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMethod("totp")}
+                className="gap-2"
+              >
+                <QrCode className="size-4" />
+                Authenticator App
+              </Button>
+              <Button
+                type="button"
+                variant={method === "passkey" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMethod("passkey")}
+                className="gap-2"
+              >
+                <Fingerprint className="size-4" />
+                Passkey
+              </Button>
+            </div>
+
+            {method === "totp" ? (
+              <div className="rounded-lg border border-border p-4 bg-muted/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <QrCode className="size-4 text-primary" />
+                    <span className="font-semibold text-sm">Scan with Authenticator App</span>
+                  </div>
+                  <Badge variant="secondary">TOTP</Badge>
                 </div>
-                <Badge variant="secondary">TOTP</Badge>
+
+                {setupLoading ? (
+                  <p className="text-xs text-muted-foreground animate-pulse">Generating your security keys...</p>
+                ) : (
+                  <>
+                    <div className="flex flex-col items-center justify-center p-3 bg-white rounded-md">
+                      {qrDataUrl ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={qrDataUrl}
+                          alt="Authenticator QR"
+                          className="size-36 rounded"
+                        />
+                      ) : (
+                        <div className="size-36 flex items-center justify-center text-xs text-muted-foreground animate-pulse">
+                          Generating QR...
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-center">
+                      <span className="text-xs text-muted-foreground">Or enter manual key:</span>
+                      <p className="font-mono text-xs font-semibold tracking-wider text-primary select-all mt-1">
+                        {totpSecret}
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                <div className="space-y-2 pt-2">
+                  <Label htmlFor="totpToken">Enter 6-Digit Code from App</Label>
+                  <Input
+                    id="totpToken"
+                    type="text"
+                    required={method === "totp"}
+                    maxLength={6}
+                    value={totpToken}
+                    onChange={(e) => setTotpToken(e.target.value)}
+                    placeholder="123456"
+                    className="text-center text-xl tracking-[0.3em] font-mono"
+                  />
+                </div>
               </div>
-
-              {setupLoading ? (
-                <p className="text-xs text-muted-foreground animate-pulse">Generating your security keys...</p>
-              ) : (
-                <>
-                  <div className="flex flex-col items-center justify-center p-3 bg-white rounded-md">
-                    {qrDataUrl ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={qrDataUrl}
-                        alt="Authenticator QR"
-                        className="size-36 rounded"
-                      />
-                    ) : (
-                      <div className="size-36 flex items-center justify-center text-xs text-muted-foreground animate-pulse">
-                        Generating QR...
-                      </div>
-                    )}
+            ) : (
+              <div className="rounded-lg border border-border p-4 bg-muted/40 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Fingerprint className="size-4 text-primary" />
+                    <span className="font-semibold text-sm">Hardware Passkey Registration</span>
                   </div>
-                  <div className="text-center">
-                    <span className="text-xs text-muted-foreground">Or enter manual key:</span>
-                    <p className="font-mono text-xs font-semibold tracking-wider text-primary select-all mt-1">
-                      {totpSecret}
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
+                  <Badge variant="secondary">WebAuthn</Badge>
+                </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="totpToken">Enter 6-Digit Code from App</Label>
-              <Input
-                id="totpToken"
-                type="text"
-                required
-                maxLength={6}
-                value={totpToken}
-                onChange={(e) => setTotpToken(e.target.value)}
-                placeholder="123456"
-                className="text-center text-xl tracking-[0.3em] font-mono"
-              />
-            </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Register this device’s biometrics (Touch ID, Face ID) or a FIDO2 USB security key for instant, phishing-resistant logins.
+                </p>
+
+                {passkeyResponse ? (
+                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-md flex items-center gap-3">
+                    <CheckCircle2 className="size-5 text-emerald-600 shrink-0" />
+                    <div className="text-xs">
+                      <p className="font-semibold text-emerald-800 dark:text-emerald-300">Passkey registered</p>
+                      <p className="text-muted-foreground">Click the button below to complete onboarding.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleRegisterPasskey}
+                    disabled={passkeyLoading}
+                    className="w-full gap-2 border-primary/50"
+                  >
+                    <Fingerprint className="size-4 text-primary" />
+                    {passkeyLoading ? "Waiting for device..." : "Register Passkey on This Device"}
+                  </Button>
+                )}
+              </div>
+            )}
           </CardContent>
 
           <CardFooter className="pt-2">
-            <Button type="submit" disabled={loading || setupLoading} className="w-full" size="lg">
+            <Button
+              type="submit"
+              disabled={loading || (method === "totp" ? setupLoading : !passkeyResponse)}
+              className="w-full"
+              size="lg"
+            >
               {loading ? "Activating Security..." : "Complete Setup & Access Mail"}
             </Button>
           </CardFooter>
