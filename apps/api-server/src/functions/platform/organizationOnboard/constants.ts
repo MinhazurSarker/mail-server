@@ -12,7 +12,7 @@ export const inputSchema = Type.Object({
   name: Type.String({ minLength: 2 }),
   slug: Type.String({ minLength: 2 }),
   domainName: Type.String({ minLength: 3 }),
-  adminEmail: Type.String({ format: "email" }),
+  adminEmail: Type.String({ minLength: 3 }),
   adminPassword: Type.String({ minLength: 8 }),
   adminDisplayName: Type.Optional(Type.String()),
 });

@@ -12,7 +12,7 @@ export const inputSchema = Type.Object({
   templateId: Type.String({ description: "Template ID or unique template name" }),
   recipients: Type.Array(
     Type.Object({
-      to: Type.String({ format: "email" }),
+      to: Type.String({ minLength: 3 }),
       variables: Type.Record(Type.String(), Type.String()),
     }),
     { minItems: 1 },
