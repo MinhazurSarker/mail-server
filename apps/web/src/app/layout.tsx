@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/context/theme-context";
 import { generateThemeCss } from "@/lib/theme";
+import { DynamicThemeSync } from "@/components/theme/DynamicThemeSync";
 
 const inter = Inter({subsets:['latin'],variable:'--font-sans'});
 
@@ -31,14 +32,19 @@ export default async function RootLayout({
 
   try {
     const apiInternal = process.env.INTERNAL_API_URL || "http://localhost:4000";
-    const res = await fetch(`${apiInternal}/api/rpc/auth/branding`, {
+    const res = await fetch(`${apiInternal}/rpc`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ host }),
-      next: { revalidate: 60 },
+      body: JSON.stringify({
+        namespace: "auth",
+        functionName: "branding",
+        data: { host },
+      }),
+      cache: "no-store",
     });
     if (res.ok) {
-      const data = await res.json();
+      const json = await res.json();
+      const data = json?.data;
       if (data && (data.isCustom || data.primaryColor)) {
         branding = { ...branding, ...data };
       }
@@ -47,20 +53,27 @@ export default async function RootLayout({
     // Fallback gracefully during build or if API server is booting
   }
 
-  const dynamicCss = branding.isCustom
-    ? generateThemeCss({
-        primaryColor: branding.primaryColor,
-        roundness: "rounded",
-      })
-    : "";
+  const dynamicCss = generateThemeCss({
+    primaryColor: branding.primaryColor || "#0ea5e9",
+    roundness: "rounded",
+  });
 
   return (
     <html lang="en" className={cn("dark", "font-sans", inter.variable)} suppressHydrationWarning>
       <head>
-        {branding.faviconUrl && (
-          <link rel="icon" href={branding.faviconUrl} />
-        )}
-        {/* Dynamic Tenant Theming Engine (Only when custom branding configured) */}
+        <link
+          id="cellsinbox-favicon"
+          rel="icon"
+          type={
+            branding.faviconUrl?.includes(".svg")
+              ? "image/svg+xml"
+              : branding.faviconUrl?.includes(".ico")
+                ? "image/x-icon"
+                : "image/png"
+          }
+          href={branding.faviconUrl || "/favicon.ico"}
+        />
+        {/* Dynamic Tenant Theming Engine */}
         {dynamicCss ? (
           <style
             id="cellsinbox-dynamic-theme"
@@ -72,6 +85,7 @@ export default async function RootLayout({
         ) : null}
       </head>
       <body className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white/90 antialiased selection:bg-brand-500 selection:text-white">
+        <DynamicThemeSync />
         <ThemeProvider>
           <TooltipProvider>{children}</TooltipProvider>
         </ThemeProvider>

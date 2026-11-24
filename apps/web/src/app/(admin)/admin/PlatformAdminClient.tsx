@@ -89,6 +89,11 @@ export default function PlatformAdminPage({
   const [onboardSuccess, setOnboardSuccess] = useState<any | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // Cascading deletion state
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; slug: string; name: string } | null>(null);
+  const [deleteSecurityCode, setDeleteSecurityCode] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 4000);
@@ -132,6 +137,31 @@ export default function PlatformAdminPage({
       loadData();
     } catch (err: any) {
       showToast(err.message || "Failed to update status.");
+    }
+  };
+
+  const handleConfirmDelete = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deleteTarget) return;
+    if (!deleteSecurityCode.trim()) {
+      showToast("Please enter your 6-digit TOTP code or administrator password.");
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const res = await rpcCall<any>("platform", "organizationDelete", {
+        organizationId: deleteTarget.id,
+        securityCode: deleteSecurityCode.trim(),
+      });
+      showToast(`Organization "${deleteTarget.name}" (${res.deletedSlug}) and all associated resources permanently deleted.`);
+      setDeleteTarget(null);
+      setDeleteSecurityCode("");
+      loadData();
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete organization.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -350,6 +380,19 @@ export default function PlatformAdminPage({
                             <span>Manage</span>
                             <ArrowRightIcon className="size-3 rtl:-scale-x-100" />
                           </Button>
+                          {t.slug !== "cellsweb" && (
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              onClick={() => {
+                                setDeleteTarget({ id: t.id, slug: t.slug, name: t.name });
+                                setDeleteSecurityCode("");
+                              }}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30 border-red-200 dark:border-red-900/50"
+                            >
+                              Delete
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -492,6 +535,67 @@ export default function PlatformAdminPage({
               </div>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Cascading Delete Organization Confirmation Modal */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="sm:max-w-md p-6">
+          <DialogHeader className="pb-3 border-b border-gray-100 dark:border-gray-800">
+            <DialogTitle className="text-base font-semibold text-red-600 dark:text-red-400">
+              Permanently Delete Organization
+            </DialogTitle>
+          </DialogHeader>
+
+          <form onSubmit={handleConfirmDelete} className="space-y-4 pt-3">
+            <div className="rounded-xl bg-red-50 p-4 text-xs text-red-800 dark:bg-red-950/30 dark:text-red-300 border border-red-200 dark:border-red-900/50 space-y-1.5">
+              <p className="font-semibold text-sm">Destructive Action Warning</p>
+              <p>
+                You are about to permanently delete <strong>{deleteTarget?.name}</strong> (<code>/{deleteTarget?.slug}</code>).
+              </p>
+              <p>
+                This will cascade and <strong>permanently purge</strong> all associated domains, user mailboxes, messages, attachments, and API keys. This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                Administrator 2FA Code (TOTP / Authenticator) or Password *
+              </label>
+              <Input
+                type="password"
+                placeholder="Enter 6-digit TOTP code or password..."
+                value={deleteSecurityCode}
+                onChange={(e) => setDeleteSecurityCode(e.target.value)}
+                required
+                autoFocus
+                className="text-xs font-mono"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Requires administrator step-up verification before destructive purge.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                variant="destructive"
+                disabled={deleting}
+              >
+                {deleting ? "Purging Organization..." : "Permanently Delete"}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

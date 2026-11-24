@@ -396,20 +396,6 @@ export default function LoginPage() {
                 <span>Back to Sign In</span>
               </Button>
             )}
-
-            {!requires2FA && (
-              <div className="text-center">
-                <Link
-                  href="/onboarding/organization"
-                  className="text-xs text-muted-foreground hover:text-primary transition-colors"
-                >
-                  New organization?{" "}
-                  <span className="font-semibold text-primary underline underline-offset-2">
-                    Onboard sovereign domain & keys
-                  </span>
-                </Link>
-              </div>
-            )}
           </CardFooter>
         </form>
       </Card>

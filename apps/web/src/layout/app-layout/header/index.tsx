@@ -18,12 +18,38 @@ import { cn } from "@/utils";
 import { useTranslations } from "next-intl";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { rpcCall } from "@/lib/api";
 
 export default function AppHeader() {
   const t = useTranslations("header");
   const inputRef = useRef<HTMLInputElement>(null);
   const [isApplicationMenuOpen, setApplicationMenuOpen] = useState(false);
   const { openMobile, toggleSidebar } = useSidebar();
+  const [branding, setBranding] = useState<{ name: string; logoUrl?: string }>({ name: "CellsInbox" });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      rpcCall<any>("auth", "branding", { host: window.location.hostname })
+        .then((res) => {
+          if (res && res.name) {
+            setBranding({ name: res.name || "CellsInbox", logoUrl: res.logoUrl });
+          }
+        })
+        .catch(() => {});
+
+      const handleUpdate = (e: any) => {
+        if (e.detail) {
+          setBranding((prev) => ({
+            name: e.detail.name || prev.name,
+            logoUrl: e.detail.logoUrl !== undefined ? e.detail.logoUrl : prev.logoUrl,
+          }));
+        }
+      };
+
+      window.addEventListener("cellsinbox:branding-updated", handleUpdate);
+      return () => window.removeEventListener("cellsinbox:branding-updated", handleUpdate);
+    }
+  }, []);
 
   const toggleApplicationMenu = () => {
     setApplicationMenuOpen(!isApplicationMenuOpen);
@@ -64,11 +90,19 @@ export default function AppHeader() {
           </Button>
 
           <Link href="/inbox" className="xl:hidden flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-brand-500 font-bold text-white text-xs">
-              C
-            </div>
-            <span className="font-bold text-sm tracking-tight text-gray-900 dark:text-white">
-              CellsInbox
+            {branding.logoUrl ? (
+              <img
+                src={branding.logoUrl}
+                alt={branding.name}
+                className="size-8 object-contain rounded-lg"
+              />
+            ) : (
+              <div className="flex size-8 items-center justify-center rounded-lg bg-brand-500 font-bold text-white text-xs">
+                {branding.name.charAt(0).toUpperCase()}
+              </div>
+            )}
+            <span className="font-bold text-sm tracking-tight text-gray-900 dark:text-white truncate">
+              {branding.name}
             </span>
           </Link>
 

@@ -104,10 +104,53 @@ export function generateThemeCss(options: {
   --sidebar-primary: ${shades["--brand-500"] || primary};
 }
 .dark {
+  ${shadeEntries}
   --primary: ${shades["--brand-500"] || primary};
   --primary-foreground: hsl(0, 0%, 100%);
   --ring: ${shades["--brand-400"] || primary};
   --sidebar-primary: ${shades["--brand-400"] || primary};
 }
 `;
+}
+
+export function applyDynamicTheme(branding: {
+  primaryColor?: string;
+  faviconUrl?: string;
+}) {
+  if (typeof document === "undefined") return;
+
+  if (branding.primaryColor) {
+    const css = generateThemeCss({
+      primaryColor: branding.primaryColor,
+      roundness: "rounded",
+    });
+    let styleEl = document.getElementById("cellsinbox-dynamic-theme") as HTMLStyleElement | null;
+    if (!styleEl) {
+      styleEl = document.createElement("style");
+      styleEl.id = "cellsinbox-dynamic-theme";
+      document.head.appendChild(styleEl);
+    }
+    styleEl.innerHTML = css;
+  }
+
+  if (branding.faviconUrl) {
+    let linkEl = document.getElementById("cellsinbox-favicon") as HTMLLinkElement | null;
+    if (!linkEl) {
+      linkEl = document.querySelector("link[rel*='icon']") as HTMLLinkElement | null;
+    }
+    if (!linkEl) {
+      linkEl = document.createElement("link");
+      linkEl.rel = "icon";
+      linkEl.id = "cellsinbox-favicon";
+      document.head.appendChild(linkEl);
+    }
+    linkEl.href = branding.faviconUrl;
+    if (branding.faviconUrl.includes(".svg")) {
+      linkEl.type = "image/svg+xml";
+    } else if (branding.faviconUrl.includes(".ico")) {
+      linkEl.type = "image/x-icon";
+    } else {
+      linkEl.type = "image/png";
+    }
+  }
 }

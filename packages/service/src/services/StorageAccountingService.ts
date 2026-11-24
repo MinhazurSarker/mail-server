@@ -53,11 +53,11 @@ export class StorageAccountingService {
       return { eligible: false, currentUsage: 0, quota: 0, remaining: 0 };
     }
 
-    const quota = user.storageQuotaBytes || 10737418240;
+    const quota = user.storageQuotaBytes !== undefined ? user.storageQuotaBytes : 10737418240;
     const currentUsage = user.storageUsedBytes || 0;
-    const remaining = Math.max(0, quota - currentUsage);
-
-    const eligible = currentUsage + estimatedSizeBytes <= quota;
+    const isUnlimited = quota === -1;
+    const remaining = isUnlimited ? Number.MAX_SAFE_INTEGER : Math.max(0, quota - currentUsage);
+    const eligible = isUnlimited || currentUsage + estimatedSizeBytes <= quota;
     return {
       eligible,
       currentUsage,
@@ -111,9 +111,14 @@ export class StorageAccountingService {
       {
         _id: userObjId,
         $expr: {
-          $lte: [
-            { $add: ["$storageUsedBytes", options.sizeBytes] },
-            "$storageQuotaBytes",
+          $or: [
+            { $eq: ["$storageQuotaBytes", -1] },
+            {
+              $lte: [
+                { $add: ["$storageUsedBytes", options.sizeBytes] },
+                "$storageQuotaBytes",
+              ],
+            },
           ],
         },
       },

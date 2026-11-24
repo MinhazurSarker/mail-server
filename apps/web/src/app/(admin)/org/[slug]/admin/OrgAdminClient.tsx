@@ -6,6 +6,7 @@ import Link from "next/link";
 import PageBreadcrumb from "@/components/common/page-breadcrumb";
 import MetricCard from "@/components/common/metric-card";
 import { rpcCall } from "@/lib/api";
+import { applyDynamicTheme } from "@/lib/theme";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -332,17 +333,41 @@ export default function TenantAdminPage({
   const handleSaveBranding = async () => {
     setSavingBranding(true);
     try {
+      const cleanPrimary = brandingForm.primaryColor.trim();
+      const cleanFavicon = brandingForm.faviconUrl.trim();
+      const cleanLogo = brandingForm.logoUrl.trim();
+      const cleanName = brandingForm.companyName.trim();
+
       await rpcCall("admin", "branding-update", {
         slug,
-        companyName: brandingForm.companyName.trim(),
-        logoUrl: brandingForm.logoUrl.trim(),
-        faviconUrl: brandingForm.faviconUrl.trim(),
-        primaryColor: brandingForm.primaryColor.trim(),
+        companyName: cleanName,
+        logoUrl: cleanLogo,
+        faviconUrl: cleanFavicon,
+        primaryColor: cleanPrimary,
         customWebmailDomains: brandingForm.customWebmailDomains
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
       });
+
+      // Instantly apply theme and notify all listeners
+      applyDynamicTheme({
+        primaryColor: cleanPrimary,
+        faviconUrl: cleanFavicon,
+      });
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("cellsinbox:branding-updated", {
+            detail: {
+              name: cleanName,
+              logoUrl: cleanLogo,
+              faviconUrl: cleanFavicon,
+              primaryColor: cleanPrimary,
+            },
+          }),
+        );
+      }
+
       showToast("Branding & custom domains updated.");
     } catch (err: any) {
       showToast(err.message || "Failed to update branding.");

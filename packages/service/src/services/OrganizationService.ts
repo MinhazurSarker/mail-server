@@ -1,5 +1,24 @@
 import argon2 from "argon2";
-import { OrganizationModel, DomainModel, UserModel, type IOrganization, type IOrganizationBranding, type IDomain, type IUser, isValidObjectId } from "@cellsinbox/db";
+import { authenticator } from "otplib";
+import {
+  OrganizationModel,
+  DomainModel,
+  UserModel,
+  MessageModel,
+  MessageBodyModel,
+  AttachmentModel,
+  MailboxStateModel,
+  MailboxStorageLedgerModel,
+  DeliveryQueueModel,
+  ApiKeyModel,
+  CredentialModel,
+  StoragePurgeQueueModel,
+  type IOrganization,
+  type IOrganizationBranding,
+  type IDomain,
+  type IUser,
+  isValidObjectId,
+} from "@cellsinbox/db";
 import type { StorageConfig } from "@cellsinbox/schema";
 import { StorageService } from "./StorageService.js";
 import { DomainService } from "./DomainService.js";
@@ -329,6 +348,17 @@ export class OrganizationService {
     ];
 
     if (!cleanHost || defaultHosts.includes(cleanHost)) {
+      const defaultOrg = await OrganizationModel.findOne({ slug: "cellsweb" });
+      if (defaultOrg && (defaultOrg.branding?.logoUrl || defaultOrg.branding?.companyName || defaultOrg.branding?.primaryColor || defaultOrg.branding?.faviconUrl)) {
+        return {
+          isCustom: true,
+          name: defaultOrg.branding?.companyName || defaultOrg.name || "CellsInbox",
+          logoUrl: defaultOrg.branding?.logoUrl,
+          faviconUrl: defaultOrg.branding?.faviconUrl,
+          primaryColor: defaultOrg.branding?.primaryColor || "#0ea5e9",
+          webmailHost: cleanHost || "webmail.cellsweb.com",
+        };
+      }
       return {
         isCustom: false,
         name: "CellsInbox",
@@ -398,5 +428,117 @@ export class OrganizationService {
     ]);
 
     return { items, total };
+  }
+
+  /**
+   * Permanently and completely purges an organization and all its associated
+   * domains, users, mailboxes, messages, storage ledgers, and enqueues blobs for purge.
+   * Requires Admin TOTP verification or Passkey step-up authentication.
+   */
+  static async deleteOrganization(params: {
+    organizationId: string;
+    adminUserId: string;
+    securityCode?: string;
+    passkeyVerified?: boolean;
+  }): Promise<{
+    success: boolean;
+    deletedSlug: string;
+    deletedUsers: number;
+    deletedDomains: number;
+    deletedMessages: number;
+  }> {
+    const org = await OrganizationModel.findById(params.organizationId);
+    if (!org) {
+      throw new Error(`Organization '${params.organizationId}' not found.`);
+    }
+
+    if (org.slug === "cellsweb") {
+      throw new Error("Security Violation: The primary platform organization 'cellsweb' cannot be deleted.");
+    }
+
+    // Step-up authentication verification (requires Admin's TOTP or passkey)
+    if (!params.passkeyVerified) {
+      if (!params.securityCode || !params.securityCode.trim()) {
+        throw new Error("Admin step-up authentication required: Please provide your 6-digit TOTP verification code or authenticate with your Passkey.");
+      }
+
+      const totpCred = await CredentialModel.findOne({
+        userId: params.adminUserId,
+        type: "TOTP",
+      }).select("+secret");
+
+      if (totpCred && totpCred.secret) {
+        const delta = authenticator.checkDelta(params.securityCode.trim(), totpCred.secret);
+        if (delta === null) {
+          throw new Error("Security Verification Failed: Invalid 6-digit TOTP verification code.");
+        }
+      } else {
+        // If no TOTP enrolled, check if user provided their password
+        const adminUser = await UserModel.findById(params.adminUserId).select("+passwordHash");
+        if (adminUser?.passwordHash) {
+          const passOk = await argon2.verify(adminUser.passwordHash, params.securityCode.trim());
+          if (!passOk) {
+            throw new Error("Security Verification Failed: Invalid administrator credentials.");
+          }
+        }
+      }
+    }
+
+    const orgId = org._id;
+
+    // 1. Collect all users in organization
+    const users = await UserModel.find({ organizationId: orgId }).select("_id");
+    const userIds = users.map((u) => u._id);
+
+    // 2. Collect all messages in organization
+    const messages = await MessageModel.find({ organizationId: orgId }).select("_id s3RawKey");
+    const messageIds = messages.map((m) => m._id);
+
+    // 3. Purge storage objects via StoragePurgeQueue
+    for (const msg of messages) {
+      if (msg.s3RawKey) {
+        await StoragePurgeQueueModel.create({
+          organizationId: orgId,
+          s3ObjectKey: msg.s3RawKey,
+          purgeAfter: new Date(),
+          attempts: 0,
+          reason: `Organization ${org.slug} deleted`,
+        });
+      }
+    }
+
+    const attachments = await AttachmentModel.find({ messageId: { $in: messageIds } }).select("s3ObjectKey");
+    for (const att of attachments) {
+      if (att.s3ObjectKey) {
+        await StoragePurgeQueueModel.create({
+          organizationId: orgId,
+          s3ObjectKey: att.s3ObjectKey,
+          purgeAfter: new Date(),
+          attempts: 0,
+          reason: `Organization ${org.slug} deleted`,
+        });
+      }
+    }
+
+    // 4. Cascade delete database entities
+    await MailboxStateModel.deleteMany({ userId: { $in: userIds } });
+    await MailboxStorageLedgerModel.deleteMany({ userId: { $in: userIds } });
+    await MessageBodyModel.deleteMany({ messageId: { $in: messageIds } });
+    await AttachmentModel.deleteMany({ messageId: { $in: messageIds } });
+    await MessageModel.deleteMany({ organizationId: orgId });
+    await DeliveryQueueModel.deleteMany({ organizationId: orgId });
+    await ApiKeyModel.deleteMany({ organizationId: orgId });
+
+    const deletedDomains = await DomainModel.deleteMany({ organizationId: orgId });
+    const deletedUsers = await UserModel.deleteMany({ organizationId: orgId });
+    await OrganizationModel.deleteOne({ _id: orgId });
+
+    return {
+      success: true,
+      deletedSlug: org.slug,
+      deletedUsers: deletedUsers.deletedCount,
+      deletedDomains: deletedDomains.deletedCount,
+      deletedMessages: messageIds.length,
+    };
   }
 }
