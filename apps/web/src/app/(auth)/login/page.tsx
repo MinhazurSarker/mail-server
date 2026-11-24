@@ -19,6 +19,7 @@ export default function LoginPage() {
   const [totpCode, setTotpCode] = useState("");
   const [requires2FA, setRequires2FA] = useState(false);
   const [userId, setUserId] = useState("");
+  const [twoFactorMethods, setTwoFactorMethods] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,6 +116,7 @@ export default function LoginPage() {
         status: "AUTHENTICATED" | "REQUIRES_ONBOARDING" | "REQUIRES_2FA";
         userId: string;
         email: string;
+        twoFactorMethods?: string[];
         accessToken?: string;
         refreshToken?: string;
       }>("auth", "login", { email: email.trim(), password });
@@ -127,7 +129,12 @@ export default function LoginPage() {
       if (res.status === "REQUIRES_2FA") {
         setRequires2FA(true);
         setUserId(res.userId);
+        const methods = res.twoFactorMethods || [];
+        setTwoFactorMethods(methods);
         setLoading(false);
+        if (methods.includes("passkey") && !methods.includes("totp")) {
+          setTimeout(() => handlePasskeyLogin(), 300);
+        }
         return;
       }
 
@@ -238,19 +245,57 @@ export default function LoginPage() {
                 </div>
               </>
             ) : (
-              <div className="space-y-2">
-                <Label htmlFor="totp">Authenticator Code</Label>
-                <Input
-                  id="totp"
-                  type="text"
-                  required
-                  maxLength={6}
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value)}
-                  placeholder="123456"
-                  autoFocus
-                  className="text-center text-xl tracking-[0.3em] font-mono"
-                />
+              <div className="space-y-4">
+                {twoFactorMethods.includes("passkey") && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    disabled={passkeyLoading}
+                    onClick={handlePasskeyLogin}
+                    className="w-full h-11 border-border/80 hover:bg-accent/60 flex items-center justify-center gap-2 font-medium shadow-sm"
+                  >
+                    {passkeyLoading ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin text-primary" />
+                        <span>Verifying Touch ID / Passkey...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Fingerprint className="size-4 text-primary" />
+                        <span>Verify with Touch ID / Passkey</span>
+                      </>
+                    )}
+                  </Button>
+                )}
+
+                {twoFactorMethods.includes("passkey") && twoFactorMethods.includes("totp") && (
+                  <div className="relative flex items-center justify-center my-1">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-border/60" />
+                    </div>
+                    <span className="relative bg-card px-2 text-xs uppercase tracking-wider text-muted-foreground">
+                      Or authenticator code
+                    </span>
+                  </div>
+                )}
+
+                {(!twoFactorMethods.length || twoFactorMethods.includes("totp")) && (
+                  <div className="space-y-2">
+                    <Label htmlFor="totp">Authenticator Code</Label>
+                    <Input
+                      id="totp"
+                      type="text"
+                      required={!twoFactorMethods.includes("passkey")}
+                      maxLength={6}
+                      value={totpCode}
+                      onChange={(e) => setTotpCode(e.target.value)}
+                      placeholder="123456"
+                      autoFocus
+                      className="text-center text-xl tracking-[0.3em] font-mono"
+                    />
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
